@@ -344,6 +344,7 @@
     "tabAuth": "认证",
     "tabAdvanced": "高级",
     "tabProxy": "路由",
+    "tabShare": "共享网络",
     "authCenter": {
       "title": "OAuth 认证中心",
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
@@ -3245,5 +3246,152 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "share": {
+    "title": "共享网络",
+    "intro": "加入或创建一个共享网络，与信任的节点互相出借 AI 供应商额度。所有加入申请都需管理员审批。",
+    "status": {
+      "connected": "已连接",
+      "connectedSummary": "已连接「{{id}}」· {{count}} 个节点在线",
+      "pending": "等待管理员审批",
+      "notJoined": "未加入网络",
+      "peersOnline": "{{count}} 个节点在线",
+      "roleCreator": "创建者",
+      "roleMember": "成员"
+    },
+    "join": {
+      "button": "加入网络…",
+      "dialogTitle": "加入共享网络",
+      "dialogDescription": "输入网络 ID 发起加入申请，等待网络管理员审批。",
+      "shareIdLabel": "网络 ID",
+      "shareIdPlaceholder": "网络 ID 或 tokentap://join?id= 链接",
+      "shareIdDescription": "支持直接粘贴完整邀请链接，将自动提取网络 ID。",
+      "invalidShareId": "请输入有效的网络 ID",
+      "submit": "申请加入",
+      "pendingTitle": "等待管理员审批",
+      "pendingHint": "请将以下短码告知网络管理员核对",
+      "expiresIn": "有效期剩余 {{time}}",
+      "expired": "短码已过期，请重新申请",
+      "cancel": "取消加入"
+    },
+    "create": {
+      "button": "创建网络…",
+      "dialogTitle": "创建共享网络",
+      "dialogDescription": "创建后你将作为管理员，审批其他节点的加入申请。",
+      "nodeNameLabel": "节点名称",
+      "nodeNamePlaceholder": "例如：家里的工作站",
+      "nodeNameDescription": "其他成员看到的本机名称，留空使用默认名称。",
+      "submit": "创建",
+      "successTitle": "网络创建成功",
+      "shareIdLabel": "网络 ID",
+      "shareKeyLabel": "网络密钥（Share Key）",
+      "shareKeyWarning": "密钥只会显示这一次，请立即复制并妥善保存。丢失后成员将无法加入，只能重新生成密钥。",
+      "shareLinkLabel": "邀请链接",
+      "shareLinkHint": "链接不含密钥，对方加入时仍需你审批。"
+    },
+    "approval": {
+      "badge": "{{count}} 个待审批",
+      "title": "新的加入申请",
+      "peerId": "PeerId",
+      "shortCode": "短码",
+      "verifyHint": "请与申请人带外核对短码，确认无误后再批准。",
+      "approve": "批准",
+      "reject": "拒绝"
+    },
+    "peers": {
+      "title": "节点列表",
+      "empty": "暂无其他节点",
+      "online": "在线",
+      "offline": "离线",
+      "direct": "直连",
+      "relay": "中继",
+      "manage": "节点管理…",
+      "managementTitle": "节点管理",
+      "managementDescription": "查看网络中的节点，可拉黑异常节点。",
+      "name": "名称",
+      "statusColumn": "状态",
+      "connectionColumn": "连接方式",
+      "used": "已用量",
+      "blocked": "已拉黑",
+      "block": "拉黑",
+      "unblock": "解除拉黑",
+      "blockConfirmTitle": "拉黑节点",
+      "blockConfirmMessage": "确定要拉黑节点「{{name}}」吗？拉黑后该节点将立即无法使用你共享的资源。"
+    },
+    "routePreference": {
+      "title": "路由偏好",
+      "local_first": "本地优先",
+      "network_first": "网络节点优先",
+      "network_only": "仅网络节点"
+    },
+    "quota": {
+      "title": "用量限额",
+      "description": "限制网络成员可消耗的 token 总量。",
+      "scope": "周期",
+      "daily": "每日",
+      "monthly": "每月",
+      "maxTokens": "Token 上限",
+      "maxTokensPlaceholder": "0",
+      "maxTokensHint": "0 表示不限制",
+      "perPeer": "按节点分别限额",
+      "invalidMaxTokens": "请输入不小于 0 的整数",
+      "usageTitle": "各节点用量",
+      "usageSummary": "已用 {{used}} / 共 {{total}}",
+      "usageUnlimited": "已用 {{used}}（不限）"
+    },
+    "leave": {
+      "button": "退出网络",
+      "confirmTitle": "退出共享网络",
+      "confirmMessage": "确定要退出共享网络吗？退出后将无法使用网络成员共享的资源。"
+    },
+    "settings": {
+      "notJoinedHint": "尚未加入共享网络。可在「路由」面板的共享网络区创建或加入网络；下方配置将在加入后生效。",
+      "keyFileWarningTitle": "密钥存储风险",
+      "keyFileWarning": "密钥未存入系统钥匙串，安全性较低。建议排查系统钥匙串可用性。",
+      "nodeName": {
+        "title": "节点显示名",
+        "description": "网络中其他成员看到的本机名称，失焦自动保存。",
+        "placeholder": "输入节点显示名"
+      },
+      "relay": {
+        "title": "Relay 地址",
+        "description": "无法直连时用于中转流量的 relay 服务器地址。",
+        "placeholder": "留空使用官方 relay",
+        "resetDefault": "恢复默认"
+      },
+      "sharedProviders": {
+        "title": "我共享的供应商",
+        "description": "选择要出借给网络成员的供应商，默认全部不共享。",
+        "empty": "该应用下暂无供应商",
+        "officialNotAllowed": "官方供应商不可共享",
+        "officialBadge": "不可共享"
+      }
+    },
+    "dangerZone": {
+      "title": "危险区",
+      "description": "以下操作不可撤销，请谨慎执行。",
+      "regenerateKey": "重新生成密钥",
+      "dissolve": "解散网络",
+      "leave": "退出网络",
+      "regenerateConfirmTitle": "重新生成密钥",
+      "regenerateConfirmMessage": "确定要重新生成密钥吗？旧 key 立即失效，所有成员需重新加入。",
+      "regenerateSuccessTitle": "新密钥已生成",
+      "dissolveConfirmTitle": "解散共享网络",
+      "dissolveConfirmMessage": "确定要解散共享网络吗？所有成员将被移除，此操作不可撤销。"
+    },
+    "toast": {
+      "created": "网络已创建",
+      "joinRequested": "加入申请已发送，等待管理员审批",
+      "joinCancelled": "已取消加入申请",
+      "left": "已退出共享网络",
+      "approved": "已批准加入",
+      "rejected": "已拒绝加入",
+      "peerBlocked": "节点已拉黑",
+      "peerUnblocked": "已解除拉黑",
+      "keyRegenerated": "密钥已重新生成",
+      "saved": "已保存",
+      "copied": "已复制",
+      "failed": "操作失败：{{detail}}"
+    }
   }
 }

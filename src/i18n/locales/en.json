@@ -344,6 +344,7 @@
     "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
+    "tabShare": "Share",
     "authCenter": {
       "title": "OAuth Authentication Center",
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
@@ -3245,5 +3246,152 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "share": {
+    "title": "Share Network",
+    "intro": "Join or create a share network to lend AI provider quota with trusted nodes. Every join request requires admin approval.",
+    "status": {
+      "connected": "Connected",
+      "connectedSummary": "Connected to \"{{id}}\" · {{count}} peers online",
+      "pending": "Waiting for admin approval",
+      "notJoined": "Not in a network",
+      "peersOnline": "{{count}} peers online",
+      "roleCreator": "Creator",
+      "roleMember": "Member"
+    },
+    "join": {
+      "button": "Join Network…",
+      "dialogTitle": "Join Share Network",
+      "dialogDescription": "Enter a network ID to send a join request and wait for the network admin's approval.",
+      "shareIdLabel": "Network ID",
+      "shareIdPlaceholder": "Network ID or tokentap://join?id= link",
+      "shareIdDescription": "You can paste a full invite link; the network ID is extracted automatically.",
+      "invalidShareId": "Please enter a valid network ID",
+      "submit": "Request to Join",
+      "pendingTitle": "Waiting for admin approval",
+      "pendingHint": "Share this short code with the network admin for verification",
+      "expiresIn": "Expires in {{time}}",
+      "expired": "Code expired — please request again",
+      "cancel": "Cancel Join"
+    },
+    "create": {
+      "button": "Create Network…",
+      "dialogTitle": "Create Share Network",
+      "dialogDescription": "Once created, you become the admin and approve join requests from other nodes.",
+      "nodeNameLabel": "Node name",
+      "nodeNamePlaceholder": "e.g. Home workstation",
+      "nodeNameDescription": "The name other members see for this machine. Leave empty to use the default.",
+      "submit": "Create",
+      "successTitle": "Network Created",
+      "shareIdLabel": "Network ID",
+      "shareKeyLabel": "Share Key",
+      "shareKeyWarning": "This key is shown only once. Copy and store it securely now — if lost, members cannot join and you must regenerate the key.",
+      "shareLinkLabel": "Invite Link",
+      "shareLinkHint": "The link contains no key; joiners still need your approval."
+    },
+    "approval": {
+      "badge": "{{count}} pending",
+      "title": "New Join Request",
+      "peerId": "PeerId",
+      "shortCode": "Code",
+      "verifyHint": "Verify the short code with the requester out-of-band before approving.",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
+    "peers": {
+      "title": "Peers",
+      "empty": "No other peers yet",
+      "online": "Online",
+      "offline": "Offline",
+      "direct": "Direct",
+      "relay": "Relay",
+      "manage": "Manage Peers…",
+      "managementTitle": "Peer Management",
+      "managementDescription": "View nodes in the network and block misbehaving ones.",
+      "name": "Name",
+      "statusColumn": "Status",
+      "connectionColumn": "Connection",
+      "used": "Used",
+      "blocked": "Blocked",
+      "block": "Block",
+      "unblock": "Unblock",
+      "blockConfirmTitle": "Block Peer",
+      "blockConfirmMessage": "Block peer \"{{name}}\"? It will immediately lose access to the resources you share."
+    },
+    "routePreference": {
+      "title": "Route Preference",
+      "local_first": "Local first",
+      "network_first": "Network first",
+      "network_only": "Network only"
+    },
+    "quota": {
+      "title": "Usage Quota",
+      "description": "Limit the total tokens network members may consume.",
+      "scope": "Period",
+      "daily": "Daily",
+      "monthly": "Monthly",
+      "maxTokens": "Token limit",
+      "maxTokensPlaceholder": "0",
+      "maxTokensHint": "0 means unlimited",
+      "perPeer": "Apply quota per peer",
+      "invalidMaxTokens": "Please enter an integer greater than or equal to 0",
+      "usageTitle": "Usage by peer",
+      "usageSummary": "{{used}} used / {{total}} total",
+      "usageUnlimited": "{{used}} used (unlimited)"
+    },
+    "leave": {
+      "button": "Leave Network",
+      "confirmTitle": "Leave Share Network",
+      "confirmMessage": "Leave this share network? You will no longer be able to use resources shared by its members."
+    },
+    "settings": {
+      "notJoinedHint": "You have not joined a share network yet. Create or join one from the Share Network section in the Routing panel; the settings below take effect after joining.",
+      "keyFileWarningTitle": "Key storage risk",
+      "keyFileWarning": "The key is not stored in the system keychain, which is less secure. Please check that the system keychain is available.",
+      "nodeName": {
+        "title": "Node Display Name",
+        "description": "The name other members see for this machine. Saved automatically on blur.",
+        "placeholder": "Enter a node display name"
+      },
+      "relay": {
+        "title": "Relay Address",
+        "description": "Relay server used to forward traffic when a direct connection is not possible.",
+        "placeholder": "Leave empty to use the official relay",
+        "resetDefault": "Reset to Default"
+      },
+      "sharedProviders": {
+        "title": "Providers I Share",
+        "description": "Choose which providers to lend to network members. Nothing is shared by default.",
+        "empty": "No providers for this app yet",
+        "officialNotAllowed": "Official providers cannot be shared",
+        "officialBadge": "Not shareable"
+      }
+    },
+    "dangerZone": {
+      "title": "Danger Zone",
+      "description": "The actions below are irreversible. Proceed with caution.",
+      "regenerateKey": "Regenerate Key",
+      "dissolve": "Dissolve Network",
+      "leave": "Leave Network",
+      "regenerateConfirmTitle": "Regenerate Key",
+      "regenerateConfirmMessage": "Regenerate the key? The old key becomes invalid immediately and all members must rejoin.",
+      "regenerateSuccessTitle": "New Key Generated",
+      "dissolveConfirmTitle": "Dissolve Share Network",
+      "dissolveConfirmMessage": "Dissolve this share network? All members will be removed. This cannot be undone."
+    },
+    "toast": {
+      "created": "Network created",
+      "joinRequested": "Join request sent — waiting for admin approval",
+      "joinCancelled": "Join request cancelled",
+      "left": "Left the share network",
+      "approved": "Join request approved",
+      "rejected": "Join request rejected",
+      "peerBlocked": "Peer blocked",
+      "peerUnblocked": "Peer unblocked",
+      "keyRegenerated": "Key regenerated",
+      "saved": "Saved",
+      "copied": "Copied",
+      "failed": "Operation failed: {{detail}}"
+    }
   }
 }

@@ -9,7 +9,7 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
-mod database;
+pub mod database;
 mod deeplink;
 mod error;
 mod gemini_config;
@@ -28,11 +28,12 @@ mod panic_hook;
 mod pi_config;
 mod prompt;
 mod prompt_files;
-mod provider;
+pub mod provider;
 mod proxy;
 mod services;
 mod session_manager;
 mod settings;
+pub mod share;
 mod store;
 
 mod tray;
@@ -237,7 +238,7 @@ fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> b
     max_level.to_level().is_some_and(|maximum| level <= maximum)
 }
 
-/// 统一处理 ccswitch:// 深链接 URL
+/// 统一处理 tokentap:// 深链接 URL
 ///
 /// - 解析 URL
 /// - 向前端发射 `deeplink-import` / `deeplink-error` 事件
@@ -248,7 +249,7 @@ fn handle_deeplink_url(
     focus_main_window: bool,
     source: &str,
 ) -> bool {
-    if !url_str.starts_with("ccswitch://") {
+    if !url_str.starts_with("tokentap://") {
         return false;
     }
 
@@ -1066,7 +1067,7 @@ pub fn run() {
                         log::debug!("  URL[{i}]: {}", url_for_log(url_str));
 
                         if handle_deeplink_url(&app_handle, url_str, true, "on_open_url") {
-                            break; // Process only first ccswitch:// URL
+                            break; // Process only first tokentap:// URL
                         }
                     }
                 }
@@ -1130,6 +1131,19 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+
+            // 组网（TokenTap Share）：接线 ProxyService/AppHandle 并从数据库恢复网络
+            {
+                let share_manager = app.state::<AppState>().share_manager.clone();
+                let proxy_service = app.state::<AppState>().proxy_service.clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    share_manager.attach(proxy_service, handle).await;
+                    if let Err(e) = share_manager.restore_from_db().await {
+                        log::warn!("[Share] 组网恢复失败: {e}");
+                    }
+                });
+            }
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1702,7 +1716,23 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
-        ]);
+                    commands::share_create_network,
+            commands::share_request_join,
+            commands::share_cancel_join,
+            commands::share_approve_join,
+            commands::share_reject_join,
+            commands::share_leave_network,
+            commands::share_get_status,
+            commands::share_set_shared_providers,
+            commands::share_set_quota,
+            commands::share_block_peer,
+            commands::share_unblock_peer,
+            commands::share_regenerate_key,
+            commands::share_set_route_preference,
+            commands::share_set_relay_addr,
+            commands::share_set_node_name,
+            commands::share_key_storage,
+]);
 
     let app = builder
         .build(tauri::generate_context!())
@@ -1787,7 +1817,7 @@ pub fn run() {
                         }
                     }
                 }
-                // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
+                // 处理通过自定义 URL 协议触发的打开事件（例如 tokentap://...）
                 RunEvent::Opened { urls } => {
                     if let Some(url) = urls.first() {
                         let url_str = url.to_string();
@@ -1796,7 +1826,7 @@ pub fn run() {
                             url_for_log(&url_str)
                         );
 
-                        if url_str.starts_with("ccswitch://") {
+                        if url_str.starts_with("tokentap://") {
                             if crate::lightweight::is_lightweight_mode() {
                                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
                                 {

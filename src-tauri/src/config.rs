@@ -199,13 +199,21 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.cc-switch)
+/// 获取应用配置目录路径 (~/.tokentap)
+///
+/// TokenTap 品牌更名后的默认目录；首次运行时自动从旧目录 ~/.cc-switch 迁移。
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
 
-    let default_dir = get_home_dir().join(".cc-switch");
+    let default_dir = get_home_dir().join(".tokentap");
+
+    // 品牌迁移：~/.cc-switch → ~/.tokentap（含真实数据时整体更名，
+    // 失败则继续使用旧目录，保证不丢数据）
+    if let Some(legacy) = migrate_legacy_app_config_dir(&default_dir) {
+        return legacy;
+    }
 
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
@@ -218,14 +226,16 @@ pub fn get_app_config_dir() -> PathBuf {
             if let Ok(home_env) = std::env::var("HOME") {
                 let trimmed = home_env.trim();
                 if !trimmed.is_empty() {
-                    let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
-                    if legacy_dir.join("cc-switch.db").exists() {
-                        log::info!(
-                            "Detected v3.10.3 legacy database at {}, using it instead of {}",
-                            legacy_dir.display(),
-                            default_dir.display()
-                        );
-                        return legacy_dir;
+                    for name in [".tokentap", ".cc-switch"] {
+                        let legacy_dir = PathBuf::from(trimmed).join(name);
+                        if legacy_dir.join("cc-switch.db").exists() {
+                            log::info!(
+                                "Detected v3.10.3 legacy database at {}, using it instead of {}",
+                                legacy_dir.display(),
+                                default_dir.display()
+                            );
+                            return legacy_dir;
+                        }
                     }
                 }
             }
@@ -233,6 +243,44 @@ pub fn get_app_config_dir() -> PathBuf {
     }
 
     default_dir
+}
+
+/// 品牌迁移：若新目录不存在而旧目录（~/.cc-switch）含真实数据，整体更名为新目录
+///
+/// 返回 `Some(旧目录)` 表示迁移失败应继续使用旧目录；`None` 表示使用新目录。
+fn migrate_legacy_app_config_dir(default_dir: &std::path::Path) -> Option<PathBuf> {
+    if default_dir.exists() {
+        return None;
+    }
+    let legacy_dir = get_home_dir().join(".cc-switch");
+    if !legacy_dir.exists() {
+        return None;
+    }
+    // 仅当旧目录包含真实数据时才迁移，避免搬运空目录
+    let has_data = legacy_dir.join("cc-switch.db").exists()
+        || legacy_dir.join("settings.json").exists()
+        || legacy_dir.join("config.json").exists();
+    if !has_data {
+        return None;
+    }
+    match std::fs::rename(&legacy_dir, default_dir) {
+        Ok(()) => {
+            log::info!(
+                "已将配置目录从 {} 迁移到 {}",
+                legacy_dir.display(),
+                default_dir.display()
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "配置目录迁移失败（{} → {}）: {e}，继续使用旧目录",
+                legacy_dir.display(),
+                default_dir.display()
+            );
+            Some(legacy_dir)
+        }
+    }
 }
 
 /// 获取应用配置文件路径

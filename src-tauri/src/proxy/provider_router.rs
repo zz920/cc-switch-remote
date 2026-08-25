@@ -20,12 +20,28 @@ pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) ->
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+/// 路由钩子：在 `select_providers` 完成后对路由列表做后处理
+///
+/// 用于组网（TokenTap Share）场景：
+/// - 消费侧：向路由列表注入“远端节点”合成供应商（按其路由偏好重排）
+/// - 出借侧：按白名单过滤并克隆出按 peer 归因的合成供应商
+///
+/// 钩子必须是无状态的快照读（内部用 `std::sync::RwLock` 快照），
+/// 不得阻塞或持有 tokio 锁，避免在请求热路径上引入死锁。
+pub trait RouteHook: Send + Sync {
+    /// 对 select_providers 的结果进行后处理（可增删、可重排）。
+    /// 返回空列表将触发 NoProvidersConfigured / AllProvidersCircuitOpen 语义。
+    fn post_select(&self, app_type: &str, selected: Vec<Provider>) -> Vec<Provider>;
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 组网路由钩子（运行时安装，None = 纯本地路由）
+    route_hook: Arc<RwLock<Option<Arc<dyn RouteHook>>>>,
 }
 
 impl ProviderRouter {
@@ -34,7 +50,13 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            route_hook: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// 安装/卸载组网路由钩子
+    pub async fn set_route_hook(&self, hook: Option<Arc<dyn RouteHook>>) {
+        *self.route_hook.write().await = hook;
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -115,6 +137,11 @@ impl ProviderRouter {
                 total_providers = 1;
                 result.push(current);
             }
+        }
+
+        // 组网路由钩子：允许运行时注入远端路由目标 / 按白名单过滤（TokenTap Share）
+        if let Some(hook) = self.route_hook.read().await.as_ref() {
+            result = hook.post_select(app_type, std::mem::take(&mut result));
         }
 
         if result.is_empty() {

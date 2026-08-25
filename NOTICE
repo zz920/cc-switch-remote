@@ -1,0 +1,10 @@
+TokenTap
+Copyright (c) 2026 TokenTap Contributors
+
+This product is derived from cc-switch:
+https://github.com/farion1231/cc-switch
+Copyright (c) 2025 Jason Young
+Licensed under the MIT License (see LICENSE).
+
+TokenTap 在 cc-switch 基础上新增 share id 组网能力
+（详见 docs/share-network-implementation-zh.md）。

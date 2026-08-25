@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { useFailoverQueue } from "@/lib/query/failover";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { useProviderHealth } from "@/lib/query/failover";
+import { ShareNetworkSection } from "@/components/share";
 import {
   useProxyStatusQuery,
   useProxyTakeoverStatus,
@@ -621,6 +622,9 @@ export function ProxyPanel({
             </div>
           </div>
         )}
+
+        {/* 共享网络（TokenTap Share） */}
+        <ShareNetworkSection />
       </section>
     </>
   );

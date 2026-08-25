@@ -393,6 +393,8 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// 组网路由钩子（TokenTap Share）：代理（重）启动时自动安装到新 ProxyServer
+    route_hook: Arc<RwLock<Option<Arc<dyn crate::proxy::provider_router::RouteHook>>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -418,6 +420,30 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            route_hook: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// 设置组网路由钩子（TokenTap Share）
+    ///
+    /// 代理正在运行时热安装到当前 ProxyServer；未运行时保存，
+    /// 下次 `start()` 自动安装到新建的 ProxyServer。
+    pub async fn set_route_hook(
+        &self,
+        hook: Option<Arc<dyn crate::proxy::provider_router::RouteHook>>,
+    ) {
+        *self.route_hook.write().await = hook.clone();
+        if let Some(server) = self.server.read().await.as_ref() {
+            match hook {
+                Some(h) => server.install_route_hook(h).await,
+                None => {
+                    server
+                        .shared_state()
+                        .provider_router
+                        .set_route_hook(None)
+                        .await
+                }
+            }
         }
     }
 
@@ -966,6 +992,10 @@ impl ProxyService {
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
         let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        // 若组网模块已注册路由钩子，启动前安装，避免启动瞬间的裸路由
+        if let Some(hook) = self.route_hook.read().await.as_ref() {
+            server.install_route_hook(hook.clone()).await;
+        }
         let info = server
             .start()
             .await

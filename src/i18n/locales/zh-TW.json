@@ -344,6 +344,7 @@
     "tabAuth": "驗證",
     "tabAdvanced": "進階",
     "tabProxy": "路由",
+    "tabShare": "共享網路",
     "authCenter": {
       "title": "OAuth 驗證中心",
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
@@ -3246,5 +3247,152 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "share": {
+    "title": "共享網路",
+    "intro": "加入或建立一個共享網路，與信任的節點互相出借 AI 供應商額度。所有加入申請都需管理員審核。",
+    "status": {
+      "connected": "已連線",
+      "connectedSummary": "已連線「{{id}}」· {{count}} 個節點在線",
+      "pending": "等待管理員審核",
+      "notJoined": "未加入網路",
+      "peersOnline": "{{count}} 個節點在線",
+      "roleCreator": "建立者",
+      "roleMember": "成員"
+    },
+    "join": {
+      "button": "加入網路…",
+      "dialogTitle": "加入共享網路",
+      "dialogDescription": "輸入網路 ID 發起加入申請，等待網路管理員審核。",
+      "shareIdLabel": "網路 ID",
+      "shareIdPlaceholder": "網路 ID 或 tokentap://join?id= 連結",
+      "shareIdDescription": "支援直接貼上完整邀請連結，將自動擷取網路 ID。",
+      "invalidShareId": "請輸入有效的網路 ID",
+      "submit": "申請加入",
+      "pendingTitle": "等待管理員審核",
+      "pendingHint": "請將以下短碼告知網路管理員核對",
+      "expiresIn": "有效期限剩餘 {{time}}",
+      "expired": "短碼已過期，請重新申請",
+      "cancel": "取消加入"
+    },
+    "create": {
+      "button": "建立網路…",
+      "dialogTitle": "建立共享網路",
+      "dialogDescription": "建立後你將成為管理員，負責審核其他節點的加入申請。",
+      "nodeNameLabel": "節點名稱",
+      "nodeNamePlaceholder": "例如：家裡的工作站",
+      "nodeNameDescription": "其他成員看到的本機名稱，留空使用預設名稱。",
+      "submit": "建立",
+      "successTitle": "網路建立成功",
+      "shareIdLabel": "網路 ID",
+      "shareKeyLabel": "網路金鑰（Share Key）",
+      "shareKeyWarning": "金鑰只會顯示這一次，請立即複製並妥善保存。遺失後成員將無法加入，只能重新產生金鑰。",
+      "shareLinkLabel": "邀請連結",
+      "shareLinkHint": "連結不含金鑰，對方加入時仍需你審核。"
+    },
+    "approval": {
+      "badge": "{{count}} 個待審核",
+      "title": "新的加入申請",
+      "peerId": "PeerId",
+      "shortCode": "短碼",
+      "verifyHint": "請透過其他管道與申請人核對短碼，確認無誤後再核准。",
+      "approve": "核准",
+      "reject": "拒絕"
+    },
+    "peers": {
+      "title": "節點列表",
+      "empty": "尚無其他節點",
+      "online": "在線",
+      "offline": "離線",
+      "direct": "直連",
+      "relay": "中繼",
+      "manage": "節點管理…",
+      "managementTitle": "節點管理",
+      "managementDescription": "檢視網路中的節點，可封鎖異常節點。",
+      "name": "名稱",
+      "statusColumn": "狀態",
+      "connectionColumn": "連線方式",
+      "used": "已用量",
+      "blocked": "已封鎖",
+      "block": "封鎖",
+      "unblock": "解除封鎖",
+      "blockConfirmTitle": "封鎖節點",
+      "blockConfirmMessage": "確定要封鎖節點「{{name}}」嗎？封鎖後該節點將立即無法使用你共享的資源。"
+    },
+    "routePreference": {
+      "title": "路由偏好",
+      "local_first": "本地優先",
+      "network_first": "網路節點優先",
+      "network_only": "僅網路節點"
+    },
+    "quota": {
+      "title": "用量限額",
+      "description": "限制網路成員可消耗的 token 總量。",
+      "scope": "週期",
+      "daily": "每日",
+      "monthly": "每月",
+      "maxTokens": "Token 上限",
+      "maxTokensPlaceholder": "0",
+      "maxTokensHint": "0 表示不限制",
+      "perPeer": "依節點分別限額",
+      "invalidMaxTokens": "請輸入不小於 0 的整數",
+      "usageTitle": "各節點用量",
+      "usageSummary": "已用 {{used}} / 共 {{total}}",
+      "usageUnlimited": "已用 {{used}}（不限）"
+    },
+    "leave": {
+      "button": "退出網路",
+      "confirmTitle": "退出共享網路",
+      "confirmMessage": "確定要退出共享網路嗎？退出後將無法使用網路成員共享的資源。"
+    },
+    "settings": {
+      "notJoinedHint": "尚未加入共享網路。可在「路由」面板的共享網路區建立或加入網路；下方設定將在加入後生效。",
+      "keyFileWarningTitle": "金鑰儲存風險",
+      "keyFileWarning": "金鑰未存入系統鑰匙圈，安全性較低。建議檢查系統鑰匙圈是否可用。",
+      "nodeName": {
+        "title": "節點顯示名稱",
+        "description": "網路中其他成員看到的本機名稱，失焦後自動儲存。",
+        "placeholder": "輸入節點顯示名稱"
+      },
+      "relay": {
+        "title": "Relay 位址",
+        "description": "無法直連時用於中繼流量的 relay 伺服器位址。",
+        "placeholder": "留空使用官方 relay",
+        "resetDefault": "恢復預設"
+      },
+      "sharedProviders": {
+        "title": "我共享的供應商",
+        "description": "選擇要出借給網路成員的供應商，預設全部不共享。",
+        "empty": "此應用程式下尚無供應商",
+        "officialNotAllowed": "官方供應商不可共享",
+        "officialBadge": "不可共享"
+      }
+    },
+    "dangerZone": {
+      "title": "危險區",
+      "description": "以下操作無法復原，請謹慎執行。",
+      "regenerateKey": "重新產生金鑰",
+      "dissolve": "解散網路",
+      "leave": "退出網路",
+      "regenerateConfirmTitle": "重新產生金鑰",
+      "regenerateConfirmMessage": "確定要重新產生金鑰嗎？舊 key 立即失效，所有成員需重新加入。",
+      "regenerateSuccessTitle": "新金鑰已產生",
+      "dissolveConfirmTitle": "解散共享網路",
+      "dissolveConfirmMessage": "確定要解散共享網路嗎？所有成員將被移除，此操作無法復原。"
+    },
+    "toast": {
+      "created": "網路已建立",
+      "joinRequested": "加入申請已送出，等待管理員審核",
+      "joinCancelled": "已取消加入申請",
+      "left": "已退出共享網路",
+      "approved": "已核准加入",
+      "rejected": "已拒絕加入",
+      "peerBlocked": "節點已封鎖",
+      "peerUnblocked": "已解除封鎖",
+      "keyRegenerated": "金鑰已重新產生",
+      "saved": "已儲存",
+      "copied": "已複製",
+      "failed": "操作失敗：{{detail}}"
+    }
   }
 }

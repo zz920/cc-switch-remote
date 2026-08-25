@@ -343,6 +343,38 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 组网（TokenTap Share）网络配置：单行表（第一版一个节点只加入一个网络）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS share_network (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                share_id TEXT NOT NULL,
+                share_id_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                route_preference TEXT NOT NULL DEFAULT 'network_first',
+                relay_addr TEXT,
+                shared_provider_ids TEXT NOT NULL DEFAULT '[]',
+                quota_scope TEXT NOT NULL DEFAULT 'daily',
+                quota_max_tokens INTEGER NOT NULL DEFAULT 0,
+                quota_per_peer INTEGER NOT NULL DEFAULT 1,
+                node_name TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 组网（TokenTap Share）黑名单节点
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS share_blocked_peers (
+                peer_id TEXT PRIMARY KEY,
+                reason TEXT,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
         if conn
@@ -535,6 +567,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（TokenTap Share 组网表）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1599,34 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// v17 -> v18: TokenTap Share 组网表（网络配置单行表 + 节点黑名单）
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS share_network (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                share_id TEXT NOT NULL,
+                share_id_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                route_preference TEXT NOT NULL DEFAULT 'network_first',
+                relay_addr TEXT,
+                shared_provider_ids TEXT NOT NULL DEFAULT '[]',
+                quota_scope TEXT NOT NULL DEFAULT 'daily',
+                quota_max_tokens INTEGER NOT NULL DEFAULT 0,
+                quota_per_peer INTEGER NOT NULL DEFAULT 1,
+                node_name TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS share_blocked_peers (
+                peer_id TEXT PRIMARY KEY,
+                reason TEXT,
+                created_at INTEGER NOT NULL
+            );",
+        )
+        .map_err(|error| AppError::Database(format!("创建组网表失败: {error}")))?;
         Ok(())
     }
 

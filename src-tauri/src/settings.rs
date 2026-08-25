@@ -564,11 +564,7 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        Some(
-            crate::config::get_home_dir()
-                .join(".cc-switch")
-                .join("settings.json"),
-        )
+        Some(crate::config::get_app_config_dir().join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {

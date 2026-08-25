@@ -344,6 +344,7 @@
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
+    "tabShare": "共有",
     "authCenter": {
       "title": "OAuth 認証センター",
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
@@ -3245,5 +3246,152 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "share": {
+    "title": "共有ネットワーク",
+    "intro": "共有ネットワークに参加または作成して、信頼できるノードと AI プロバイダーの枠を貸し借りできます。参加申請はすべて管理者の承認が必要です。",
+    "status": {
+      "connected": "接続中",
+      "connectedSummary": "「{{id}}」に接続中 · {{count}} 台のノードがオンライン",
+      "pending": "管理者の承認待ち",
+      "notJoined": "ネットワーク未参加",
+      "peersOnline": "{{count}} 台のノードがオンライン",
+      "roleCreator": "作成者",
+      "roleMember": "メンバー"
+    },
+    "join": {
+      "button": "ネットワークに参加…",
+      "dialogTitle": "共有ネットワークに参加",
+      "dialogDescription": "ネットワーク ID を入力して参加申請を送信し、管理者の承認を待ちます。",
+      "shareIdLabel": "ネットワーク ID",
+      "shareIdPlaceholder": "ネットワーク ID または tokentap://join?id= リンク",
+      "shareIdDescription": "招待リンクをそのまま貼り付けても、ネットワーク ID が自動で抽出されます。",
+      "invalidShareId": "有効なネットワーク ID を入力してください",
+      "submit": "参加を申請",
+      "pendingTitle": "管理者の承認待ち",
+      "pendingHint": "以下のショートコードをネットワーク管理者に伝えて確認してもらってください",
+      "expiresIn": "有効期限まで {{time}}",
+      "expired": "コードの有効期限が切れました。再度申請してください",
+      "cancel": "参加をキャンセル"
+    },
+    "create": {
+      "button": "ネットワークを作成…",
+      "dialogTitle": "共有ネットワークを作成",
+      "dialogDescription": "作成すると管理者となり、他のノードからの参加申請を承認します。",
+      "nodeNameLabel": "ノード名",
+      "nodeNamePlaceholder": "例：自宅のワークステーション",
+      "nodeNameDescription": "他のメンバーに表示されるこのマシンの名前です。空欄の場合はデフォルト名が使われます。",
+      "submit": "作成",
+      "successTitle": "ネットワークを作成しました",
+      "shareIdLabel": "ネットワーク ID",
+      "shareKeyLabel": "共有キー（Share Key）",
+      "shareKeyWarning": "このキーが表示されるのは一度だけです。今すぐコピーして安全に保管してください。紛失するとメンバーが参加できなくなり、キーの再生成が必要になります。",
+      "shareLinkLabel": "招待リンク",
+      "shareLinkHint": "リンクにキーは含まれません。参加には引き続きあなたの承認が必要です。"
+    },
+    "approval": {
+      "badge": "{{count}} 件承認待ち",
+      "title": "新しい参加申請",
+      "peerId": "PeerId",
+      "shortCode": "ショートコード",
+      "verifyHint": "承認する前に、申請者と別経路でショートコードを照合してください。",
+      "approve": "承認",
+      "reject": "拒否"
+    },
+    "peers": {
+      "title": "ノード一覧",
+      "empty": "他のノードはまだありません",
+      "online": "オンライン",
+      "offline": "オフライン",
+      "direct": "直接接続",
+      "relay": "リレー",
+      "manage": "ノード管理…",
+      "managementTitle": "ノード管理",
+      "managementDescription": "ネットワーク内のノードを確認し、不正なノードをブロックできます。",
+      "name": "名前",
+      "statusColumn": "状態",
+      "connectionColumn": "接続方式",
+      "used": "使用量",
+      "blocked": "ブロック中",
+      "block": "ブロック",
+      "unblock": "ブロック解除",
+      "blockConfirmTitle": "ノードをブロック",
+      "blockConfirmMessage": "ノード「{{name}}」をブロックしますか？ブロック後、このノードはあなたが共有するリソースを直ちに利用できなくなります。"
+    },
+    "routePreference": {
+      "title": "ルーティング優先",
+      "local_first": "ローカル優先",
+      "network_first": "ネットワーク優先",
+      "network_only": "ネットワークのみ"
+    },
+    "quota": {
+      "title": "使用量の上限",
+      "description": "ネットワークメンバーが消費できるトークン総量を制限します。",
+      "scope": "期間",
+      "daily": "毎日",
+      "monthly": "毎月",
+      "maxTokens": "トークン上限",
+      "maxTokensPlaceholder": "0",
+      "maxTokensHint": "0 は無制限",
+      "perPeer": "ノードごとに上限を適用",
+      "invalidMaxTokens": "0 以上の整数を入力してください",
+      "usageTitle": "ノード別の使用量",
+      "usageSummary": "使用済み {{used}} / 合計 {{total}}",
+      "usageUnlimited": "使用済み {{used}}（無制限）"
+    },
+    "leave": {
+      "button": "ネットワークを退出",
+      "confirmTitle": "共有ネットワークを退出",
+      "confirmMessage": "共有ネットワークを退出しますか？退出後は、メンバーが共有するリソースを利用できなくなります。"
+    },
+    "settings": {
+      "notJoinedHint": "まだ共有ネットワークに参加していません。「ルーティング」パネルの共有ネットワークセクションから作成・参加できます。以下の設定は参加後に有効になります。",
+      "keyFileWarningTitle": "キー保存のリスク",
+      "keyFileWarning": "キーがシステムキーチェーンに保存されていないため、安全性が低くなっています。システムキーチェーンが利用可能か確認してください。",
+      "nodeName": {
+        "title": "ノード表示名",
+        "description": "ネットワーク内の他のメンバーに表示されるこのマシンの名前です。フォーカスを外すと自動で保存されます。",
+        "placeholder": "ノード表示名を入力"
+      },
+      "relay": {
+        "title": "リレーアドレス",
+        "description": "直接接続できない場合にトラフィックを中継するリレーサーバーのアドレスです。",
+        "placeholder": "空欄の場合は公式リレーを使用",
+        "resetDefault": "デフォルトに戻す"
+      },
+      "sharedProviders": {
+        "title": "共有するプロバイダー",
+        "description": "ネットワークメンバーに貸し出すプロバイダーを選択します。デフォルトではすべて未共有です。",
+        "empty": "このアプリにはまだプロバイダーがありません",
+        "officialNotAllowed": "公式プロバイダーは共有できません",
+        "officialBadge": "共有不可"
+      }
+    },
+    "dangerZone": {
+      "title": "危険な操作",
+      "description": "以下の操作は取り消せません。慎重に実行してください。",
+      "regenerateKey": "キーを再生成",
+      "dissolve": "ネットワークを解散",
+      "leave": "ネットワークを退出",
+      "regenerateConfirmTitle": "キーを再生成",
+      "regenerateConfirmMessage": "キーを再生成しますか？古いキーは直ちに無効になり、すべてのメンバーが再参加する必要があります。",
+      "regenerateSuccessTitle": "新しいキーを生成しました",
+      "dissolveConfirmTitle": "共有ネットワークを解散",
+      "dissolveConfirmMessage": "共有ネットワークを解散しますか？すべてのメンバーが削除されます。この操作は取り消せません。"
+    },
+    "toast": {
+      "created": "ネットワークを作成しました",
+      "joinRequested": "参加申請を送信しました。管理者の承認を待っています",
+      "joinCancelled": "参加申請をキャンセルしました",
+      "left": "共有ネットワークを退出しました",
+      "approved": "参加を承認しました",
+      "rejected": "参加を拒否しました",
+      "peerBlocked": "ノードをブロックしました",
+      "peerUnblocked": "ブロックを解除しました",
+      "keyRegenerated": "キーを再生成しました",
+      "saved": "保存しました",
+      "copied": "コピーしました",
+      "failed": "操作に失敗しました：{{detail}}"
+    }
   }
 }

@@ -289,95 +289,21 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        Router::new()
-            // 健康检查
-            .route("/health", get(handlers::health_check))
-            .route("/status", get(handlers::get_status))
-            // Claude API (支持带前缀和不带前缀两种格式)
-            .route("/v1/messages", post(handlers::handle_messages))
-            .route("/claude/v1/messages", post(handlers::handle_messages))
-            // Claude Desktop 3P 本地 gateway（独立 provider namespace）
-            .route(
-                "/claude-desktop/v1/models",
-                get(handlers::handle_claude_desktop_models),
-            )
-            .route(
-                "/claude-desktop/v1/messages",
-                post(handlers::handle_claude_desktop_messages),
-            )
-            // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
-            .route("/chat/completions", post(handlers::handle_chat_completions))
-            .route(
-                "/v1/chat/completions",
-                post(handlers::handle_chat_completions),
-            )
-            .route(
-                "/v1/v1/chat/completions",
-                post(handlers::handle_chat_completions),
-            )
-            .route(
-                "/codex/v1/chat/completions",
-                post(handlers::handle_chat_completions),
-            )
-            // OpenAI Models API (Codex CLI reachability check)
-            .route("/models", get(handlers::handle_models))
-            .route("/v1/models", get(handlers::handle_models))
-            // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
-            .route("/responses", post(handlers::handle_responses))
-            .route("/v1/responses", post(handlers::handle_responses))
-            .route("/v1/v1/responses", post(handlers::handle_responses))
-            .route("/codex/v1/responses", post(handlers::handle_responses))
-            // Grok Build uses the Responses protocol but has an independent
-            // provider namespace and failover queue.
-            .route(
-                "/grokbuild/v1/responses",
-                post(handlers::handle_grokbuild_responses),
-            )
-            // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
-            .route(
-                "/responses/compact",
-                post(handlers::handle_responses_compact),
-            )
-            .route(
-                "/v1/responses/compact",
-                post(handlers::handle_responses_compact),
-            )
-            .route(
-                "/v1/v1/responses/compact",
-                post(handlers::handle_responses_compact),
-            )
-            .route(
-                "/codex/v1/responses/compact",
-                post(handlers::handle_responses_compact),
-            )
-            .route(
-                "/grokbuild/v1/responses/compact",
-                post(handlers::handle_grokbuild_responses_compact),
-            )
-            // Codex standalone Alpha Search API. All local aliases normalize to
-            // the selected provider's canonical sibling `/alpha/search` route.
-            .route("/alpha/search", post(handlers::handle_alpha_search))
-            .route("/v1/alpha/search", post(handlers::handle_alpha_search))
-            .route("/v1/v1/alpha/search", post(handlers::handle_alpha_search))
-            .route(
-                "/codex/v1/alpha/search",
-                post(handlers::handle_alpha_search),
-            )
-            // Gemini API (支持带前缀和不带前缀)
-            //
-            // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
-            // `:streamGenerateContent` / `:countTokens` 之外，Gemini SDK / CLI 还会发
-            // GET `/models`、GET `/models/<id>` 等只读端点。如果只挂 POST，这些 GET
-            // 请求会在路由层 404，绕过本地代理的统计、整流和故障转移。
-            .route("/v1beta/*path", any(handlers::handle_gemini))
-            .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
-            // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
-            .route("/gemini/v1/*path", any(handlers::handle_gemini))
-            // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
-            .with_state(self.state.clone())
+        build_proxy_router(self.state.clone())
     }
 
+    /// 安装组网路由钩子（TokenTap Share：注入远端路由目标 / 白名单过滤）
+    pub async fn install_route_hook(
+        &self,
+        hook: std::sync::Arc<dyn super::provider_router::RouteHook>,
+    ) {
+        self.state.provider_router.set_route_hook(Some(hook)).await;
+    }
+
+    /// 访问共享状态（组网模块构建受限实例时使用）
+    pub fn shared_state(&self) -> ProxyState {
+        self.state.clone()
+    }
     /// 在不重启服务的情况下更新运行时配置
     pub async fn apply_runtime_config(&self, config: &ProxyConfig) {
         *self.state.config.write().await = config.clone();
@@ -411,6 +337,100 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+}
+
+/// 基于给定状态构建代理 axum Router
+///
+/// 从 `ProxyServer::build_router` 抽出：组网（TokenTap Share）出借侧需要
+/// 用“受限 ProxyState”（白名单路由表 + 按 peer 归因）复用同一套 handlers。
+pub(crate) fn build_proxy_router(state: ProxyState) -> Router {
+    Router::new()
+        // 健康检查
+        .route("/health", get(handlers::health_check))
+        .route("/status", get(handlers::get_status))
+        // Claude API (支持带前缀和不带前缀两种格式)
+        .route("/v1/messages", post(handlers::handle_messages))
+        .route("/claude/v1/messages", post(handlers::handle_messages))
+        // Claude Desktop 3P 本地 gateway（独立 provider namespace）
+        .route(
+            "/claude-desktop/v1/models",
+            get(handlers::handle_claude_desktop_models),
+        )
+        .route(
+            "/claude-desktop/v1/messages",
+            post(handlers::handle_claude_desktop_messages),
+        )
+        // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
+        .route("/chat/completions", post(handlers::handle_chat_completions))
+        .route(
+            "/v1/chat/completions",
+            post(handlers::handle_chat_completions),
+        )
+        .route(
+            "/v1/v1/chat/completions",
+            post(handlers::handle_chat_completions),
+        )
+        .route(
+            "/codex/v1/chat/completions",
+            post(handlers::handle_chat_completions),
+        )
+        // OpenAI Models API (Codex CLI reachability check)
+        .route("/models", get(handlers::handle_models))
+        .route("/v1/models", get(handlers::handle_models))
+        // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
+        .route("/responses", post(handlers::handle_responses))
+        .route("/v1/responses", post(handlers::handle_responses))
+        .route("/v1/v1/responses", post(handlers::handle_responses))
+        .route("/codex/v1/responses", post(handlers::handle_responses))
+        // Grok Build uses the Responses protocol but has an independent
+        // provider namespace and failover queue.
+        .route(
+            "/grokbuild/v1/responses",
+            post(handlers::handle_grokbuild_responses),
+        )
+        // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
+        .route(
+            "/responses/compact",
+            post(handlers::handle_responses_compact),
+        )
+        .route(
+            "/v1/responses/compact",
+            post(handlers::handle_responses_compact),
+        )
+        .route(
+            "/v1/v1/responses/compact",
+            post(handlers::handle_responses_compact),
+        )
+        .route(
+            "/codex/v1/responses/compact",
+            post(handlers::handle_responses_compact),
+        )
+        .route(
+            "/grokbuild/v1/responses/compact",
+            post(handlers::handle_grokbuild_responses_compact),
+        )
+        // Codex standalone Alpha Search API. All local aliases normalize to
+        // the selected provider's canonical sibling `/alpha/search` route.
+        .route("/alpha/search", post(handlers::handle_alpha_search))
+        .route("/v1/alpha/search", post(handlers::handle_alpha_search))
+        .route("/v1/v1/alpha/search", post(handlers::handle_alpha_search))
+        .route(
+            "/codex/v1/alpha/search",
+            post(handlers::handle_alpha_search),
+        )
+        // Gemini API (支持带前缀和不带前缀)
+        //
+        // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
+        // `:streamGenerateContent` / `:countTokens` 之外，Gemini SDK / CLI 还会发
+        // GET `/models`、GET `/models/<id>` 等只读端点。如果只挂 POST，这些 GET
+        // 请求会在路由层 404，绕过本地代理的统计、整流和故障转移。
+        .route("/v1beta/*path", any(handlers::handle_gemini))
+        .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
+        // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
+        .route("/gemini/v1/*path", any(handlers::handle_gemini))
+        // 提高默认请求体大小限制（避免 413 Payload Too Large）
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+        .with_state(state)
 }
 
 #[cfg(test)]

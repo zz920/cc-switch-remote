@@ -1,3 +1,14 @@
+# TokenTap
+
+> 基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License, Copyright (c) 2025 Jason Young）二次开发。
+>
+> TokenTap 在 cc-switch 的供应商管理与本地路由能力之上，新增 **share id 组网**：
+> 多个客户端通过 share id 组成网络，把本地 Claude Code / Codex 等 CLI 的请求
+> 路由到网络内其他成员的机器上，消费对方共享出来的供应商额度。
+> 请求永远由出借方本机向上游服务商发出（出站身份模型），服务商全程只见出借方本机。
+>
+> 以下为上游项目原始 README（赞助/推广内容已移除），功能文档逐步替换中。
+
 <div align="center">
 
 # CC Switch
