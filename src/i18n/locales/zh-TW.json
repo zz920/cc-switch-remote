@@ -344,7 +344,7 @@
     "tabAuth": "驗證",
     "tabAdvanced": "進階",
     "tabProxy": "路由",
-    "tabShare": "共享網路",
+    "tabShare": "共享",
     "authCenter": {
       "title": "OAuth 驗證中心",
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
@@ -3251,6 +3251,48 @@
   "share": {
     "title": "共享網路",
     "intro": "加入或建立一個共享網路，與信任的節點互相出借 AI 供應商額度。所有加入申請都需管理員審核。",
+    "drawer": {
+      "nodes": {
+        "title": "節點管理",
+        "description": "管理網路狀態、加入審核、成員與安全操作"
+      },
+      "sharing": {
+        "title": "共享與配額",
+        "description": "選擇共享供應商並檢視雙向 Token 用量"
+      },
+      "relay": {
+        "title": "Relay 與連線",
+        "description": "檢視連線狀態並設定 P2P 失敗時的 Relay"
+      }
+    },
+    "networkUsage": {
+      "title": "共享網路 Token 統計",
+      "description": "依目前配額週期（{{period}}）統計成功請求的 Token。",
+      "provided": "已提供",
+      "providedHint": "其他節點透過本機供應商消耗的 Token",
+      "consumed": "已消耗",
+      "consumedHint": "本機透過其他節點供應商消耗的 Token",
+      "joinRequired": "加入共享網路後開始統計。"
+    },
+    "networkProvider": {
+      "title": "共享網路 Provider",
+      "description": "選擇在線節點為 {{app}} 提供的遠端 Provider；本地 Provider 不會被替換。",
+      "active": "正在使用",
+      "waiting": "可設定",
+      "noneAvailable": "目前沒有在線節點為 {{app}} 提供可用 Provider。",
+      "providerCount": "{{count}} 個 Provider",
+      "selected": "已選擇",
+      "selectProvider": "選擇 {{name}}",
+      "modelsUnknown": "模型資訊待刷新",
+      "use": "使用",
+      "check": "檢測連通",
+      "checkPassed": "共享 Provider 連通性正常",
+      "usage": "查看用量",
+      "refresh": "刷新共享 Provider",
+      "saved": "共享 Provider 路由已更新",
+      "proxyRequired": "已選擇共享 Provider，但 {{app}} 需要先開啟本地路由接管，請求才會經過共享網路。",
+      "openRouting": "設定路由"
+    },
     "status": {
       "connected": "已連線",
       "connectedSummary": "已連線「{{id}}」· {{count}} 個節點在線",
@@ -3297,7 +3339,8 @@
       "shortCode": "短碼",
       "verifyHint": "請透過其他管道與申請人核對短碼，確認無誤後再核准。",
       "approve": "核准",
-      "reject": "拒絕"
+      "reject": "拒絕",
+      "creatorOnly": "只有網路建立者可以審核加入申請。"
     },
     "peers": {
       "title": "節點列表",
@@ -3317,13 +3360,16 @@
       "block": "封鎖",
       "unblock": "解除封鎖",
       "blockConfirmTitle": "封鎖節點",
-      "blockConfirmMessage": "確定要封鎖節點「{{name}}」嗎？封鎖後該節點將立即無法使用你共享的資源。"
+      "blockConfirmMessage": "確定要封鎖節點「{{name}}」嗎？封鎖後該節點將立即無法使用你共享的資源。",
+      "unnamed": "未命名節點"
     },
     "routePreference": {
-      "title": "路由偏好",
-      "local_first": "本地優先",
-      "network_first": "網路節點優先",
-      "network_only": "僅網路節點"
+      "title": "共享網路路由模式",
+      "description": "控制共享網路 Provider 是否加入本機代理路由；對 Claude、Codex、Gemini 和 GrokBuild 全域生效。",
+      "local_only": "關閉共享網路",
+      "local_first": "本地優先，共享網路作為後備",
+      "network_first": "共享網路優先，本地作為後備",
+      "network_only": "僅使用共享網路"
     },
     "quota": {
       "title": "用量限額",

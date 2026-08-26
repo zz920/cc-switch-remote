@@ -32,6 +32,17 @@ pub trait RouteHook: Send + Sync {
     /// 对 select_providers 的结果进行后处理（可增删、可重排）。
     /// 返回空列表将触发 NoProvidersConfigured / AllProvidersCircuitOpen 语义。
     fn post_select(&self, app_type: &str, selected: Vec<Provider>) -> Vec<Provider>;
+
+    /// 对带有共享网络 Provider target 的请求进行后处理。
+    /// 默认行为保持与旧版钩子兼容。
+    fn post_select_with_target(
+        &self,
+        app_type: &str,
+        selected: Vec<Provider>,
+        _target: Option<&str>,
+    ) -> Vec<Provider> {
+        self.post_select(app_type, selected)
+    }
 }
 
 /// 供应商路由器
@@ -65,6 +76,15 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+        self.select_providers_for_target(app_type, None).await
+    }
+
+    /// 选择可用供应商，并可按请求携带的 target 限定共享网络出借侧的具体 Provider。
+    pub async fn select_providers_for_target(
+        &self,
+        app_type: &str,
+        target: Option<&str>,
+    ) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -141,7 +161,7 @@ impl ProviderRouter {
 
         // 组网路由钩子：允许运行时注入远端路由目标 / 按白名单过滤（TokenTap Share）
         if let Some(hook) = self.route_hook.read().await.as_ref() {
-            result = hook.post_select(app_type, std::mem::take(&mut result));
+            result = hook.post_select_with_target(app_type, std::mem::take(&mut result), target);
         }
 
         if result.is_empty() {

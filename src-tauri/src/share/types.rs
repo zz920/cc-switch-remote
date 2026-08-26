@@ -3,6 +3,7 @@
 //! 全部为 serde camelCase，与前端 TypeScript 类型一一对应。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 网络角色
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +69,32 @@ impl RoutePreference {
 /// 单个 peer 的状态（展示用）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShareProviderInfo {
+    /// Provider 所属应用（codex/claude/gemini/grokbuild）
+    pub app: String,
+    /// 出借方本地 Provider ID
+    pub provider_id: String,
+    /// 出借方 Provider 显示名称
+    pub name: String,
+    /// 该 Provider 声明的可用模型
+    pub models: Vec<String>,
+}
+
+/// 共享 Provider 的连通性检查结果（由出借方执行探测，不发送实际模型请求）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareProviderCheckResult {
+    pub success: bool,
+    pub status: String,
+    pub message: String,
+    pub response_time_ms: Option<u64>,
+    pub http_status: Option<u16>,
+    pub tested_at: i64,
+}
+
+/// 单个 peer 的状态（展示用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SharePeerInfo {
     pub peer_id: String,
     /// 节点显示名（能力通告获得，可能为空）
@@ -77,6 +104,8 @@ pub struct SharePeerInfo {
     pub direct: bool,
     /// 该节点共享出来的应用类型（claude/codex/gemini...）
     pub shared_apps: Vec<String>,
+    /// 该节点当前实际共享的 Provider 与模型摘要（不包含密钥/配置）
+    pub providers: Vec<ShareProviderInfo>,
     /// 本周期该 peer 已消耗的 token（出借侧视角；消费侧为 0）
     pub tokens_used: i64,
     /// 剩余配额（出借侧视角；无限额为 None）
@@ -114,6 +143,8 @@ pub struct ShareNetworkStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     pub route_preference: String,
+    /// 消费侧按应用选择的远端 Provider target。缺少某应用键表示全部可用 Provider。
+    pub route_targets: HashMap<String, Vec<String>>,
     pub node_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_addr: Option<String>,
@@ -122,6 +153,10 @@ pub struct ShareNetworkStatus {
     pub quota_scope: String,
     pub quota_max_tokens: i64,
     pub quota_per_peer: bool,
+    /// 当前配额周期内，本机供应商向网络其他节点提供的 token 总量
+    pub provided_tokens: i64,
+    /// 当前配额周期内，本机通过网络其他节点消费的 token 总量
+    pub consumed_tokens: i64,
     pub peers: Vec<SharePeerInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_join: Option<PendingJoinInfo>,

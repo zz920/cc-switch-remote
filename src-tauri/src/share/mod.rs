@@ -42,6 +42,8 @@ use route_hook::{ConsumerRouteHook, RemotePeerRoute, RemoteRouteTable};
 use swarm::{JoinRequestWire, JoinResponseWire, SwarmCmd, SwarmEventOut, SwarmHandle};
 use types::*;
 
+const ROUTE_TARGETS_SETTING: &str = "share_route_targets";
+
 /// 组网管理器（全局单例，存于 AppState）
 #[derive(Clone)]
 pub struct ShareManager {
@@ -73,6 +75,8 @@ pub struct ShareManagerInner {
     relay_transport: AsyncRwLock<Option<String>>,
     /// 已知节点（含离线，key = peer_id base58）
     peers: Arc<AsyncRwLock<HashMap<String, PeerRuntime>>>,
+    /// 消费侧按应用选择的远端 Provider target（缺少 app 键表示全部）
+    route_targets: AsyncRwLock<HashMap<String, HashSet<String>>>,
     /// 加入申请（出借方待审批，key = peer_id）
     join_requests: Arc<AsyncRwLock<HashMap<String, JoinRequestInfo>>>,
     join_responders: AsyncRwLock<HashMap<String, oneshot::Sender<JoinResponseWire>>>,
@@ -91,8 +95,18 @@ pub struct ShareManagerInner {
 struct PeerRuntime {
     name: String,
     online: bool,
+    /// 仅在使用当前共享密钥成功完成 meta 认证后置为 true。
+    /// transport 连接本身不代表节点已经获准加入网络。
+    authenticated: bool,
     direct: bool,
     shared_apps: Vec<String>,
+    providers: Vec<ShareProviderInfo>,
+}
+
+fn apply_identified_name(peer: &mut PeerRuntime, name: String) {
+    if !name.is_empty() && !peer.authenticated {
+        peer.name = name;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +130,7 @@ impl ShareManager {
                     preference: RoutePreference::LocalOnly,
                     bridge_port: config::SHARE_BRIDGE_PORT,
                     remotes: Vec::new(),
+                    selected_targets: HashMap::new(),
                 })),
                 whitelist: Arc::new(RwLock::new(HashSet::new())),
                 quota: Arc::new(AsyncRwLock::new(ShareQuotaConfig {
@@ -128,6 +143,7 @@ impl ShareManager {
                 relay_connected: AsyncRwLock::new(false),
                 relay_transport: AsyncRwLock::new(None),
                 peers: Arc::new(AsyncRwLock::new(HashMap::new())),
+                route_targets: AsyncRwLock::new(HashMap::new()),
                 join_requests: Arc::new(AsyncRwLock::new(HashMap::new())),
                 join_responders: AsyncRwLock::new(HashMap::new()),
                 pending_join: AsyncRwLock::new(None),
@@ -164,6 +180,7 @@ impl ShareManager {
             .ok_or_else(|| "share key 缺失，请重新加入网络".to_string())?;
         log::info!("[Share] 恢复网络「{}」", row.share_id);
         self.apply_network_row(row.clone()).await;
+        self.load_route_targets().await;
         *self.inner.share_key.write().await = Some(key);
         *self.inner.key_storage.write().await = keystore::current_storage(&row.share_id_hash);
         self.start_full_runtime().await
@@ -351,6 +368,7 @@ impl ShareManager {
                 preference: RoutePreference::LocalOnly,
                 bridge_port: config::SHARE_BRIDGE_PORT,
                 remotes: Vec::new(),
+                selected_targets: HashMap::new(),
             };
         }
         self.inner.peers.write().await.clear();
@@ -380,7 +398,9 @@ impl ShareManager {
             share_id: share_id.clone(),
             share_id_hash: hash,
             role: ShareRole::Creator.as_str().to_string(),
-            route_preference: RoutePreference::NetworkFirst.as_str().to_string(),
+            // 加入网络不等于同意立即把 API 流量交给网络节点；由用户在 UI
+            // 中显式开启共享供应商路由。
+            route_preference: RoutePreference::LocalOnly.as_str().to_string(),
             relay_addr: None,
             shared_provider_ids: Vec::new(),
             quota_scope: "daily".to_string(),
@@ -556,7 +576,8 @@ impl ShareManager {
                 share_id: display_id,
                 share_id_hash: hash.to_string(),
                 role: ShareRole::Member.as_str().to_string(),
-                route_preference: RoutePreference::NetworkFirst.as_str().to_string(),
+                // 审批通过后保持本地路由，等待用户显式开启共享供应商。
+                route_preference: RoutePreference::LocalOnly.as_str().to_string(),
                 relay_addr: None,
                 shared_provider_ids: Vec::new(),
                 quota_scope: "daily".to_string(),
@@ -627,6 +648,13 @@ impl ShareManager {
             "share:join-resolved",
             json!({"peerId": peer_id, "accepted": true}),
         );
+        // 审批响应发出后立即尝试认证，节点无需等待下一轮周期刷新；
+        // 若对端尚未完成落盘，周期任务仍会继续重试。
+        let manager = self.clone();
+        let pid = peer_id.to_string();
+        tokio::spawn(async move {
+            manager.refresh_peer_meta(&pid).await;
+        });
         Ok(())
     }
 
@@ -658,6 +686,8 @@ impl ShareManager {
         self.stop_runtime().await;
         *self.inner.network.write().await = None;
         *self.inner.share_key.write().await = None;
+        self.inner.route_targets.write().await.clear();
+        let _ = self.persist_route_targets().await;
         if let Some(row) = row {
             let _ = keystore::delete_share_key(&row.share_id_hash);
         }
@@ -773,6 +803,67 @@ impl ShareManager {
             .await
     }
 
+    /// 设置某个应用实际参与共享路由的远端 Provider target。
+    /// target 格式为 `<peer_id>:<provider_id>`，只保存选择，不保存任何密钥。
+    pub async fn set_route_targets(
+        &self,
+        app_type: String,
+        targets: Vec<String>,
+    ) -> Result<(), String> {
+        if !matches!(
+            app_type.as_str(),
+            "claude" | "codex" | "gemini" | "grokbuild"
+        ) {
+            return Err(format!("不支持的共享路由应用: {app_type}"));
+        }
+        let cleaned: HashSet<String> = targets
+            .into_iter()
+            .map(|target| target.trim().to_string())
+            .filter(|target| !target.is_empty())
+            .collect();
+        self.inner
+            .route_targets
+            .write()
+            .await
+            .insert(app_type, cleaned);
+        self.persist_route_targets().await?;
+        self.sync_route_table().await;
+        Ok(())
+    }
+
+    async fn load_route_targets(&self) {
+        let parsed = self
+            .inner
+            .db
+            .get_setting(ROUTE_TARGETS_SETTING)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<HashMap<String, HashSet<String>>>(&raw).ok())
+            .unwrap_or_default();
+        *self.inner.route_targets.write().await = parsed;
+    }
+
+    async fn persist_route_targets(&self) -> Result<(), String> {
+        let snapshot = self.route_targets_snapshot().await;
+        let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+        self.inner
+            .db
+            .set_setting(ROUTE_TARGETS_SETTING, &json)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn route_targets_snapshot(&self) -> HashMap<String, Vec<String>> {
+        let targets = self.inner.route_targets.read().await;
+        targets
+            .iter()
+            .map(|(app, values)| {
+                let mut values = values.iter().cloned().collect::<Vec<_>>();
+                values.sort();
+                (app.clone(), values)
+            })
+            .collect()
+    }
+
     /// 设置 relay 地址覆盖
     pub async fn set_relay_addr(&self, addr: Option<String>) -> Result<(), String> {
         let normalized = normalize_relay_addr_list(addr.as_deref())?;
@@ -837,6 +928,9 @@ impl ShareManager {
 
     /// 完整组网状态（share_get_status）
     pub async fn get_status(&self) -> Result<ShareNetworkStatus, String> {
+        // 节点名称通过 meta 通告动态同步；状态查询是前端的固定轮询入口，
+        // 在这里主动刷新一次可避免远端必须等待完整的后台刷新周期。
+        self.refresh_online_peer_meta().await;
         let row = self.inner.network.read().await.clone();
         let pending = self.inner.pending_join.read().await.clone();
         let requests: Vec<JoinRequestInfo> = self
@@ -852,6 +946,25 @@ impl ShareManager {
         let relay_connected = *self.inner.relay_connected.read().await;
         let relay_transport = self.inner.relay_transport.read().await.clone();
 
+        let (scope, max_tokens) = {
+            let quota = self.inner.quota.read().await;
+            (quota.scope.clone(), quota.max_tokens)
+        };
+        let usage_since = quota::period_start_epoch(&scope);
+        let provided_tokens = self
+            .inner
+            .db
+            .share_all_peers_tokens_used(usage_since)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, tokens)| tokens)
+            .sum();
+        let consumed_tokens = self
+            .inner
+            .db
+            .share_consumed_tokens(usage_since)
+            .unwrap_or(0);
+
         let mut peers_out: Vec<SharePeerInfo> = Vec::new();
         let blocked = self.inner.db.list_share_blocked_peers().unwrap_or_default();
         let blocked_set: HashSet<String> = blocked.iter().map(|b| b.peer_id.clone()).collect();
@@ -859,12 +972,13 @@ impl ShareManager {
 
         {
             let peers = self.inner.peers.read().await;
-            let (scope, max_tokens) = {
-                let q = self.inner.quota.read().await;
-                (q.scope.clone(), q.max_tokens)
-            };
             for (peer_id, p) in peers.iter() {
                 if relay_peer_id.as_deref() == Some(peer_id.as_str()) {
+                    continue;
+                }
+                // 连接建立并不等于审批通过。申请中的节点需要先完成共享密钥
+                // 认证，避免在节点管理和消费路由中提前暴露。
+                if !p.authenticated {
                     continue;
                 }
                 let (tokens_used, quota_remaining) =
@@ -876,6 +990,7 @@ impl ShareManager {
                     online: p.online,
                     direct: p.direct,
                     shared_apps: p.shared_apps.clone(),
+                    providers: p.providers.clone(),
                     tokens_used,
                     quota_remaining,
                     is_blocked: blocked_set.contains(peer_id),
@@ -894,6 +1009,7 @@ impl ShareManager {
                     online: false,
                     direct: false,
                     shared_apps: Vec::new(),
+                    providers: Vec::new(),
                     tokens_used: 0,
                     quota_remaining: None,
                     is_blocked: true,
@@ -912,12 +1028,15 @@ impl ShareManager {
                 route_preference: RoutePreference::from_str_lossy(&row.route_preference)
                     .as_str()
                     .to_string(),
+                route_targets: self.route_targets_snapshot().await,
                 node_name: row.node_name,
                 relay_addr: row.relay_addr.or_else(|| load_global_relay_addr()),
                 shared_provider_ids: row.shared_provider_ids,
                 quota_scope: row.quota_scope,
                 quota_max_tokens: row.quota_max_tokens,
                 quota_per_peer: row.quota_per_peer,
+                provided_tokens,
+                consumed_tokens,
                 peers: peers_out,
                 pending_join: pending.map(|p| PendingJoinInfo {
                     share_id: p.share_id,
@@ -979,10 +1098,15 @@ impl ShareManager {
                         let entry = peers.entry(peer_id.to_base58()).or_insert(PeerRuntime {
                             name: String::new(),
                             online: false,
+                            authenticated: false,
                             direct: false,
                             shared_apps: Vec::new(),
+                            providers: Vec::new(),
                         });
                         entry.online = true;
+                        // 每次建立新的 transport 连接都重新确认共享密钥，避免旧
+                        // 会话的认证状态在密钥轮换或重新入网后被沿用。
+                        entry.authenticated = false;
                         entry.direct = direct;
                     }
                     self.sync_route_table().await;
@@ -1018,12 +1142,15 @@ impl ShareManager {
                     let entry = peers.entry(peer_id.to_base58()).or_insert(PeerRuntime {
                         name: String::new(),
                         online: false,
+                        authenticated: false,
                         direct: false,
                         shared_apps: Vec::new(),
+                        providers: Vec::new(),
                     });
-                    if !name.is_empty() {
-                        entry.name = name;
-                    }
+                    // Identify 的 agent_version 是 swarm 启动时的快照，只能作为
+                    // 未认证节点的临时名称；已认证节点以共享 meta 中的名称为准，
+                    // 防止旧 Identify 事件覆盖用户后来修改的节点名。
+                    apply_identified_name(entry, name);
                 }
                 SwarmEventOut::HttpInbound { peer_id, stream } => {
                     let manager = self.clone();
@@ -1147,15 +1274,19 @@ impl ShareManager {
 
     /// 同步消费侧路由快照（online + 未拉黑节点）
     async fn sync_route_table(&self) {
+        let selected_targets = self.inner.route_targets.read().await.clone();
         let peers = self.inner.peers.read().await;
         let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
         let remotes: Vec<RemotePeerRoute> = peers
             .iter()
-            .filter(|(id, p)| p.online && relay_peer_id.as_deref() != Some(id.as_str()))
+            .filter(|(id, p)| {
+                p.online && p.authenticated && relay_peer_id.as_deref() != Some(id.as_str())
+            })
             .map(|(id, p)| RemotePeerRoute {
                 peer_id: id.clone(),
                 name: p.name.clone(),
                 shared_apps: p.shared_apps.clone(),
+                providers: p.providers.clone(),
             })
             .collect();
         drop(peers);
@@ -1165,6 +1296,37 @@ impl ShareManager {
             .write()
             .unwrap_or_else(|e| e.into_inner());
         table.remotes = remotes;
+        table.selected_targets = selected_targets;
+    }
+
+    /// 主动刷新当前在线且已认证节点的能力通告。
+    ///
+    /// 状态查询由前端定期调用，因此将刷新放在该入口可以让节点名称等
+    /// 元数据在下一次轮询内同步，同时限制并发请求的单次等待时间。
+    async fn refresh_online_peer_meta(&self) {
+        let peer_ids: Vec<String> = {
+            let peers = self.inner.peers.read().await;
+            let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
+            peers
+                .iter()
+                .filter(|(id, p)| {
+                    p.online && p.authenticated && relay_peer_id.as_deref() != Some(id.as_str())
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        let manager = self.clone();
+        let tasks = peer_ids.into_iter().map(|peer_id| {
+            let manager = manager.clone();
+            async move {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    manager.refresh_peer_meta(&peer_id),
+                )
+                .await;
+            }
+        });
+        futures::future::join_all(tasks).await;
     }
 
     /// meta 周期刷新
@@ -1209,6 +1371,11 @@ impl ShareManager {
         let Ok(response) = result else {
             return;
         };
+        // 只有成功的 meta 响应才证明对端接受了当前共享密钥。不能仅凭
+        // “请求有 HTTP 响应”判定认证成功，否则 401 错误体也可能被误记为在线。
+        if !response.status().is_success() {
+            return;
+        }
         let body = match axum::body::to_bytes(response.into_body(), 64 * 1024).await {
             Ok(b) => b,
             Err(_) => return,
@@ -1232,11 +1399,22 @@ impl ShareManager {
             .to_string();
         {
             let mut peers = self.inner.peers.write().await;
-            if let Some(p) = peers.get_mut(peer_id) {
-                p.shared_apps = shared_apps;
-                if !name.is_empty() {
-                    p.name = name;
-                }
+            let entry = peers.entry(peer_id.to_string()).or_insert(PeerRuntime {
+                name: String::new(),
+                online: true,
+                authenticated: false,
+                direct: false,
+                shared_apps: Vec::new(),
+                providers: Vec::new(),
+            });
+            entry.authenticated = true;
+            entry.online = true;
+            entry.shared_apps = shared_apps;
+            entry.providers =
+                serde_json::from_value(meta.get("providers").cloned().unwrap_or_else(|| json!([])))
+                    .unwrap_or_default();
+            if !name.is_empty() {
+                entry.name = name;
             }
         }
         self.sync_route_table().await;
@@ -1310,6 +1488,59 @@ impl ShareManager {
         *out.status_mut() = parts.status;
         *out.headers_mut() = parts.headers;
         Ok(out)
+    }
+
+    /// 请求出借方检查某个共享 Provider 的连通性。
+    /// 该请求只执行健康检查，不提交模型请求，也不消耗共享配额。
+    pub async fn test_remote_provider(
+        &self,
+        app_type: String,
+        peer_id: String,
+        provider_id: String,
+    ) -> Result<ShareProviderCheckResult, String> {
+        let peer = {
+            let peers = self.inner.peers.read().await;
+            peers
+                .get(&peer_id)
+                .filter(|peer| peer.online && peer.authenticated && !peer.providers.is_empty())
+                .cloned()
+                .ok_or_else(|| "共享节点当前不可用".to_string())?
+        };
+        let advertised = peer
+            .providers
+            .iter()
+            .any(|provider| provider.app == app_type && provider.provider_id == provider_id);
+        if !advertised {
+            return Err("该 Provider 尚未在节点能力信息中出现".to_string());
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            config::HEADER_ROUTE_PROVIDER,
+            http::HeaderValue::from_str(&provider_id)
+                .map_err(|e| format!("Provider target 无效: {e}"))?,
+        );
+        let response = self
+            .http_via_peer(
+                &peer_id,
+                http::Method::GET,
+                &format!("{}?app={}", config::PROVIDER_CHECK_PATH, app_type),
+                headers,
+                Vec::new(),
+            )
+            .await?;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 128 * 1024)
+            .await
+            .map_err(|e| format!("读取连通性结果失败: {e}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "出借方检查接口返回 HTTP {}: {}",
+                status,
+                String::from_utf8_lossy(&body)
+            ));
+        }
+        serde_json::from_slice::<ShareProviderCheckResult>(&body)
+            .map_err(|e| format!("解析连通性结果失败: {e}"))
     }
 
     fn emit<T: serde::Serialize + Clone + Send + 'static>(&self, event: &str, payload: T) {
@@ -1487,5 +1718,23 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].contains("/udp/15720/quic-v1/"));
         assert!(candidates[1].contains("/tcp/15720/"));
+    }
+
+    #[test]
+    fn identify_name_is_provisional_after_meta_authentication() {
+        let mut peer = PeerRuntime {
+            name: "用户设置的名称".to_string(),
+            online: true,
+            authenticated: true,
+            direct: true,
+            shared_apps: Vec::new(),
+            providers: Vec::new(),
+        };
+        apply_identified_name(&mut peer, "启动时的旧名称".to_string());
+        assert_eq!(peer.name, "用户设置的名称");
+
+        peer.authenticated = false;
+        apply_identified_name(&mut peer, "未认证节点名称".to_string());
+        assert_eq!(peer.name, "未认证节点名称");
     }
 }

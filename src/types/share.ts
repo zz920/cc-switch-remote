@@ -1,5 +1,13 @@
 //! 组网（TokenTap Share）相关类型，与后端 serde camelCase 对齐
 
+/** 出借方公开的 Provider 能力摘要（不含密钥） */
+export interface ShareProviderInfo {
+  app: string;
+  providerId: string;
+  name: string;
+  models: string[];
+}
+
 /** 节点信息 */
 export interface SharePeer {
   peerId: string;
@@ -9,6 +17,7 @@ export interface SharePeer {
   direct: boolean;
   /** 该节点共享的应用类型 */
   sharedApps: string[];
+  providers: ShareProviderInfo[];
   tokensUsed: number;
   quotaRemaining: number | null;
   isBlocked: boolean;
@@ -35,12 +44,18 @@ export interface ShareStatus {
   shareId?: string;
   role?: string;
   routePreference: string;
+  /** 按应用选择的远端 Provider target；缺少应用键表示全部可用 Provider */
+  routeTargets: Record<string, string[]>;
   nodeName: string;
   relayAddr?: string;
   sharedProviderIds: string[];
   quotaScope: string;
   quotaMaxTokens: number;
   quotaPerPeer: boolean;
+  /** 当前配额周期内，本机向共享网络提供的 token */
+  providedTokens: number;
+  /** 当前配额周期内，本机从共享网络消费的 token */
+  consumedTokens: number;
   peers: SharePeer[];
   pendingJoin?: PendingJoin;
   incomingRequests: JoinRequest[];
@@ -78,3 +93,13 @@ export type ShareRoutePreference =
   | "local_first"
   | "network_first"
   | "network_only";
+
+/** 共享 Provider 连通性探测结果 */
+export interface ShareProviderCheckResult {
+  success: boolean;
+  status: string;
+  message: string;
+  responseTimeMs?: number;
+  httpStatus?: number;
+  testedAt: number;
+}

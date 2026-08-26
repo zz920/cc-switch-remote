@@ -14,7 +14,8 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use super::types::RoutePreference;
+use super::types::{RoutePreference, ShareProviderInfo};
+use std::collections::HashMap;
 
 /// 消费侧远端路由快照（ShareManager 异步维护，钩子同步读取）
 #[derive(Debug, Clone, Default)]
@@ -23,6 +24,8 @@ pub struct RemoteRouteTable {
     pub bridge_port: u16,
     /// 远端节点路由项
     pub remotes: Vec<RemotePeerRoute>,
+    /// 按 app 保存的 target 选择。缺少 app 键表示该 app 使用全部远端 Provider。
+    pub selected_targets: HashMap<String, std::collections::HashSet<String>>,
 }
 
 /// 单个远端节点的路由信息
@@ -32,6 +35,8 @@ pub struct RemotePeerRoute {
     pub name: String,
     /// 该节点共享的应用类型
     pub shared_apps: Vec<String>,
+    /// 节点实际共享的 Provider 摘要
+    pub providers: Vec<ShareProviderInfo>,
 }
 
 impl RemotePeerRoute {
@@ -46,6 +51,16 @@ pub const SHARE_REMOTE_PROVIDER_PREFIX: &str = "share";
 /// 消费侧远端供应商 id
 pub fn remote_provider_id(peer_id: &str) -> String {
     format!("{SHARE_REMOTE_PROVIDER_PREFIX}:{peer_id}")
+}
+
+/// 远端 Provider 的合成 id（用于本地日志归因和熔断器隔离）。
+pub fn remote_provider_id_for_provider(peer_id: &str, provider_id: &str) -> String {
+    format!("{SHARE_REMOTE_PROVIDER_PREFIX}:{peer_id}:{provider_id}")
+}
+
+/// 远端路由 target（在本地配置中保存，不包含共享密钥）。
+pub fn remote_target_id(peer_id: &str, provider_id: &str) -> String {
+    format!("{peer_id}:{provider_id}")
 }
 
 /// 构造消费侧远端节点的合成 Provider
@@ -94,6 +109,56 @@ pub fn synthetic_remote_provider(
     provider
 }
 
+/// 构造指向远端具体 Provider 的合成 Provider。
+pub fn synthetic_remote_provider_for_provider(
+    app_type: &str,
+    peer_id: &str,
+    peer_name: &str,
+    provider: &ShareProviderInfo,
+    bridge_port: u16,
+) -> Provider {
+    let base_url = format!(
+        "http://127.0.0.1:{bridge_port}/peer/{peer_id}/provider/{}",
+        provider.provider_id
+    );
+    let settings_config = match app_type {
+        "claude" => json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": base_url,
+                "ANTHROPIC_AUTH_TOKEN": "tokentap",
+            }
+        }),
+        "codex" => json!({
+            "auth": { "OPENAI_API_KEY": "tokentap" },
+            "config": "",
+            "base_url": base_url,
+        }),
+        "gemini" => json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": base_url,
+                "GEMINI_API_KEY": "tokentap",
+            }
+        }),
+        _ => json!({
+            "base_url": base_url,
+            "apiKey": "tokentap",
+        }),
+    };
+    let display = if peer_name.is_empty() {
+        format!("网络 · {}", provider.name)
+    } else {
+        format!("网络 · {} · {}", peer_name, provider.name)
+    };
+    let mut result = Provider::with_id(
+        remote_provider_id_for_provider(peer_id, &provider.provider_id),
+        display,
+        settings_config,
+        None,
+    );
+    result.category = Some("share".to_string());
+    result
+}
+
 /// 消费侧路由钩子：把远端节点按偏好合并进路由列表
 pub struct ConsumerRouteHook {
     table: Arc<RwLock<RemoteRouteTable>>,
@@ -107,22 +172,61 @@ impl ConsumerRouteHook {
 
 impl RouteHook for ConsumerRouteHook {
     fn post_select(&self, app_type: &str, selected: Vec<Provider>) -> Vec<Provider> {
-        let (preference, bridge_port, remotes) = {
+        let (preference, bridge_port, remotes, selected_targets) = {
             let snap = match self.table.read() {
                 Ok(s) => s,
                 Err(_) => return selected,
             };
-            (snap.preference, snap.bridge_port, snap.remotes.clone())
+            (
+                snap.preference,
+                snap.bridge_port,
+                snap.remotes.clone(),
+                snap.selected_targets.clone(),
+            )
         };
 
         if remotes.is_empty() || preference == RoutePreference::LocalOnly {
             return selected;
         }
 
+        let selection = selected_targets.get(app_type);
         let remote_providers: Vec<Provider> = remotes
             .iter()
-            .filter(|r| r.supports(app_type))
-            .map(|r| synthetic_remote_provider(app_type, &r.peer_id, &r.name, bridge_port))
+            .flat_map(|remote| {
+                let provider_routes: Vec<Provider> = remote
+                    .providers
+                    .iter()
+                    .filter(|provider| provider.app == app_type)
+                    .filter(|provider| {
+                        selection.map_or(true, |targets| {
+                            targets
+                                .contains(&remote_target_id(&remote.peer_id, &provider.provider_id))
+                        })
+                    })
+                    .map(|provider| {
+                        synthetic_remote_provider_for_provider(
+                            app_type,
+                            &remote.peer_id,
+                            &remote.name,
+                            provider,
+                            bridge_port,
+                        )
+                    })
+                    .collect();
+                if provider_routes.is_empty()
+                    && remote.providers.is_empty()
+                    && remote.supports(app_type)
+                {
+                    vec![synthetic_remote_provider(
+                        app_type,
+                        &remote.peer_id,
+                        &remote.name,
+                        bridge_port,
+                    )]
+                } else {
+                    provider_routes
+                }
+            })
             .collect();
 
         match preference {
@@ -168,6 +272,21 @@ impl LenderRouteHook {
 
 impl RouteHook for LenderRouteHook {
     fn post_select(&self, app_type: &str, _selected: Vec<Provider>) -> Vec<Provider> {
+        self.select_shared(app_type, None)
+    }
+
+    fn post_select_with_target(
+        &self,
+        app_type: &str,
+        _selected: Vec<Provider>,
+        target: Option<&str>,
+    ) -> Vec<Provider> {
+        self.select_shared(app_type, target)
+    }
+}
+
+impl LenderRouteHook {
+    fn select_shared(&self, app_type: &str, target: Option<&str>) -> Vec<Provider> {
         let whitelist = match self.whitelist.read() {
             Ok(w) => w.clone(),
             Err(_) => return Vec::new(),
@@ -183,6 +302,8 @@ impl RouteHook for LenderRouteHook {
         all.into_values()
             // 只出借白名单内的供应商
             .filter(|p| whitelist.contains(&format!("{app_type}:{}", p.id)))
+            // 请求指定了共享 Provider 时，只允许该 Provider 参与路由。
+            .filter(|p| target.map_or(true, |target_id| target_id == p.id))
             // 官方/托管类供应商（OAuth 绑定本机）不可外借
             .filter(|p| p.category.as_deref() != Some("official"))
             .map(|mut p| {
@@ -202,6 +323,7 @@ mod tests {
             preference,
             bridge_port: 15723,
             remotes,
+            selected_targets: HashMap::new(),
         }
     }
 
@@ -210,6 +332,7 @@ mod tests {
             peer_id: peer.to_string(),
             name: String::new(),
             shared_apps: vec!["claude".to_string()],
+            providers: Vec::new(),
         }
     }
 
@@ -260,6 +383,42 @@ mod tests {
             "http://127.0.0.1:15723/peer/peer-a"
         );
         assert!(p.name.contains("peer-a"));
+    }
+
+    #[test]
+    fn consumer_hook_filters_selected_provider_targets() {
+        let remote = RemotePeerRoute {
+            peer_id: "peer-a".to_string(),
+            name: "节点 A".to_string(),
+            shared_apps: vec!["codex".to_string()],
+            providers: vec![
+                ShareProviderInfo {
+                    app: "codex".to_string(),
+                    provider_id: "zhipu".to_string(),
+                    name: "智谱".to_string(),
+                    models: vec!["glm-4".to_string()],
+                },
+                ShareProviderInfo {
+                    app: "codex".to_string(),
+                    provider_id: "kimi".to_string(),
+                    name: "Kimi".to_string(),
+                    models: vec!["moonshot-v1".to_string()],
+                },
+            ],
+        };
+        let table = Arc::new(RwLock::new(table_with(
+            RoutePreference::NetworkOnly,
+            vec![remote],
+        )));
+        table.write().unwrap().selected_targets.insert(
+            "codex".to_string(),
+            HashSet::from([remote_target_id("peer-a", "kimi")]),
+        );
+        let hook = ConsumerRouteHook::new(table);
+        let out = hook.post_select("codex", Vec::new());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "share:peer-a:kimi");
+        assert!(out[0].name.contains("Kimi"));
     }
 
     #[test]

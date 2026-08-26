@@ -1145,6 +1145,14 @@ function App() {
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }
                       onCreate={() => setIsAddOpen(true)}
+                      onOpenShareSettings={() => {
+                        setSettingsDefaultTab("share");
+                        setCurrentView("settings");
+                      }}
+                      onOpenRoutingSettings={() => {
+                        setSettingsDefaultTab("proxy");
+                        setCurrentView("settings");
+                      }}
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel

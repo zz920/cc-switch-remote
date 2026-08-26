@@ -33,6 +33,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { ShareProviderRouteCard } from "@/components/share/ShareProviderRouteCard";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -65,6 +66,8 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
+  onOpenShareSettings?: () => void;
+  onOpenRoutingSettings?: () => void;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
@@ -87,6 +90,8 @@ export function ProviderList({
   onOpenWebsite,
   onOpenTerminal,
   onCreate,
+  onOpenShareSettings,
+  onOpenRoutingSettings,
   isLoading = false,
   isProxyRunning = false,
   isProxyTakeover = false,
@@ -414,6 +419,13 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <div className="mt-4 space-y-4">
+        <ShareProviderRouteCard
+          appId={appId}
+          isProxyRunning={isProxyRunning}
+          isProxyTakeover={isProxyTakeover}
+          onOpenShareSettings={onOpenShareSettings}
+          onOpenRoutingSettings={onOpenRoutingSettings}
+        />
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -612,6 +624,13 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+      <ShareProviderRouteCard
+        appId={appId}
+        isProxyRunning={isProxyRunning}
+        isProxyTakeover={isProxyTakeover}
+        onOpenShareSettings={onOpenShareSettings}
+        onOpenRoutingSettings={onOpenRoutingSettings}
+      />
     </div>
   );
 }

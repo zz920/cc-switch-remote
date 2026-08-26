@@ -8,6 +8,7 @@ use axum::{extract::State, response::Response, routing::any, Router};
 use hyper_util::rt::TokioIo;
 use tokio::sync::oneshot;
 
+use super::config::HEADER_ROUTE_PROVIDER;
 use super::ShareManager;
 
 /// 桥接服务器句柄
@@ -105,7 +106,8 @@ pub async fn start_bridge(manager: ShareManager, port: u16) -> Result<BridgeHand
     })
 }
 
-/// 桥接入口：/peer/<peer_id>/<原始路径>
+/// 桥接入口：/peer/<peer_id>/<原始路径>，或
+/// /peer/<peer_id>/provider/<provider_id>/<原始路径>。
 async fn bridge_handler(
     State(st): State<BridgeState>,
     req: http::Request<axum::body::Body>,
@@ -118,9 +120,18 @@ async fn bridge_handler(
             "路径须为 /peer/<peer_id>/<api-path>",
         );
     };
-    let (peer_id, api_path) = match rest.split_once('/') {
-        Some((p, sub)) => (p.to_string(), format!("/{sub}")),
-        None => (rest.to_string(), "/".to_string()),
+    let (peer_id, rest) = match rest.split_once('/') {
+        Some((p, sub)) => (p.to_string(), sub),
+        None => (rest.to_string(), ""),
+    };
+    let (provider_id, api_path) = if let Some(provider_rest) = rest.strip_prefix("provider/") {
+        let (provider_id, api_rest) = match provider_rest.split_once('/') {
+            Some((provider, path)) => (Some(provider.to_string()), path),
+            None => (Some(provider_rest.to_string()), ""),
+        };
+        (provider_id, format!("/{api_rest}"))
+    } else {
+        (None, format!("/{rest}"))
     };
     let query = req
         .uri()
@@ -129,7 +140,13 @@ async fn bridge_handler(
         .unwrap_or_default();
     let path_and_query = format!("{api_path}{query}");
     let method = req.method().clone();
-    let headers = req.headers().clone();
+    let mut headers = req.headers().clone();
+    if let Some(provider_id) = provider_id {
+        let Ok(value) = http::HeaderValue::from_str(&provider_id) else {
+            return error_response(http::StatusCode::BAD_REQUEST, "无效的共享 Provider ID");
+        };
+        headers.insert(HEADER_ROUTE_PROVIDER, value);
+    }
     let body = match axum::body::to_bytes(req.into_body(), 256 * 1024 * 1024).await {
         Ok(b) => b.to_vec(),
         Err(e) => {
