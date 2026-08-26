@@ -1953,6 +1953,11 @@ impl RequestForwarder {
         for (key, value) in headers {
             let key_str = key.as_str();
 
+            // 共享网络内部的 Provider 选择头只用于本地路由，不能泄漏到真实上游。
+            if key_str.eq_ignore_ascii_case(crate::share::config::HEADER_ROUTE_PROVIDER) {
+                continue;
+            }
+
             // --- host — 原位替换为上游 host（保持客户端原始位置） ---
             if key_str.eq_ignore_ascii_case("host") {
                 if let Some(ref host_val) = upstream_host {

@@ -242,7 +242,7 @@ export function SettingsPage({
               className="min-w-0 shrink-0 px-2 sm:px-3"
               value="share"
             >
-              {t("settings.tabShare", { defaultValue: "共享网络" })}
+              {t("settings.tabShare", { defaultValue: "共享" })}
             </TabsTrigger>
             <TabsTrigger className="min-w-0 shrink-0 px-2 sm:px-3" value="auth">
               {t("settings.tabAuth", { defaultValue: "认证" })}

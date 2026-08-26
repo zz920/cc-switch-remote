@@ -3,6 +3,7 @@ import { shareApi } from "@/lib/api/share";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import type {
   ShareQuotaConfig,
+  ShareProviderCheckResult,
   ShareRoutePreference,
   ShareStatus,
 } from "@/types/share";
@@ -129,6 +130,24 @@ export function useSetRoutePreference() {
   return useShareMutation((preference: ShareRoutePreference) =>
     shareApi.setRoutePreference(preference),
   );
+}
+
+export function useSetRouteTargets() {
+  return useShareMutation(
+    ({ appType, targets }: { appType: string; targets: string[] }) =>
+      shareApi.setRouteTargets(appType, targets),
+  );
+}
+
+export function useTestSharedProvider() {
+  return useMutation<
+    ShareProviderCheckResult,
+    Error,
+    { appType: string; peerId: string; providerId: string }
+  >({
+    mutationFn: ({ appType, peerId, providerId }) =>
+      shareApi.testProvider(appType, peerId, providerId),
+  });
 }
 
 export function useSetRelayAddr() {

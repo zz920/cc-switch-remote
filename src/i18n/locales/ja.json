@@ -3250,6 +3250,44 @@
   "share": {
     "title": "共有ネットワーク",
     "intro": "共有ネットワークに参加または作成して、信頼できるノードと AI プロバイダーの枠を貸し借りできます。参加申請はすべて管理者の承認が必要です。",
+    "drawer": {
+      "nodes": {
+        "title": "ノード管理",
+        "description": "ネットワーク状態、参加承認、メンバー、安全操作を管理します"
+      },
+      "sharing": {
+        "title": "共有と上限",
+        "description": "共有プロバイダーを選択し、双方向の Token 使用量を確認します"
+      },
+      "relay": {
+        "title": "Relay と接続",
+        "description": "接続状態を確認し、P2P 失敗時の Relay を設定します"
+      }
+    },
+    "networkUsage": {
+      "title": "共有ネットワーク Token 統計",
+      "description": "現在の上限期間（{{period}}）に成功したリクエストの Token を集計します。",
+      "provided": "提供済み",
+      "providedHint": "他のノードがこの端末のプロバイダーで消費した Token",
+      "consumed": "消費済み",
+      "consumedHint": "この端末が他のノードのプロバイダーで消費した Token",
+      "joinRequired": "共有ネットワークへの参加後に集計を開始します。"
+    },
+    "networkProvider": {
+      "title": "共有ネットワークプロバイダー",
+      "description": "オンラインノードが {{app}} 向けに共有する API をローカルルートに追加します。",
+      "active": "使用中",
+      "configured": "有効・ルート待機中",
+      "disabled": "無効",
+      "enable": "共有ネットワークプロバイダーを使用",
+      "available": "利用可能なノード：{{count}} 台",
+      "noneAvailable": "現在 {{app}} の API を提供するオンラインノードはありません",
+      "preference": "共有ルートの優先順位",
+      "globalHint": "この設定は Claude、Codex、Gemini、GrokBuild の共有ルートに共通で適用されます。",
+      "proxyRequired": "共有プロバイダーは有効ですが、{{app}} でローカルルートの引き継ぎを有効にする必要があります。",
+      "openRouting": "ルートを設定",
+      "manage": "共有ネットワークを管理"
+    },
     "status": {
       "connected": "接続中",
       "connectedSummary": "「{{id}}」に接続中 · {{count}} 台のノードがオンライン",
@@ -3296,7 +3334,8 @@
       "shortCode": "ショートコード",
       "verifyHint": "承認する前に、申請者と別経路でショートコードを照合してください。",
       "approve": "承認",
-      "reject": "拒否"
+      "reject": "拒否",
+      "creatorOnly": "参加申請を承認できるのはネットワーク作成者のみです。"
     },
     "peers": {
       "title": "ノード一覧",
@@ -3316,10 +3355,12 @@
       "block": "ブロック",
       "unblock": "ブロック解除",
       "blockConfirmTitle": "ノードをブロック",
-      "blockConfirmMessage": "ノード「{{name}}」をブロックしますか？ブロック後、このノードはあなたが共有するリソースを直ちに利用できなくなります。"
+      "blockConfirmMessage": "ノード「{{name}}」をブロックしますか？ブロック後、このノードはあなたが共有するリソースを直ちに利用できなくなります。",
+      "unnamed": "名前のないノード"
     },
     "routePreference": {
       "title": "ルーティング優先",
+      "local_only": "共有ネットワークを使用しない",
       "local_first": "ローカル優先",
       "network_first": "ネットワーク優先",
       "network_only": "ネットワークのみ"

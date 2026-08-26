@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Check,
   ChevronDown,
   Copy,
   Loader2,
@@ -41,13 +40,11 @@ import {
   useLeaveNetwork,
   useRejectJoin,
   useRequestJoin,
-  useSetRoutePreference,
   useShareStatus,
 } from "@/lib/query/share";
 import type {
   CreateNetworkResult,
   JoinRequest,
-  ShareRoutePreference,
   ShareStatus,
 } from "@/types/share";
 
@@ -59,12 +56,6 @@ export function extractShareId(input: string): string {
   return trimmed;
 }
 
-const ROUTE_PREFERENCES: ShareRoutePreference[] = [
-  "local_first",
-  "network_first",
-  "network_only",
-];
-
 function formatCountdown(remainingSeconds: number): string {
   const total = Math.max(0, remainingSeconds);
   const minutes = Math.floor(total / 60);
@@ -74,7 +65,7 @@ function formatCountdown(remainingSeconds: number): string {
 
 interface ShareNetworkSectionProps {
   showApprovals?: boolean;
-  onOpenSettings: () => void;
+  onOpenSettings?: () => void;
 }
 
 export function ShareNetworkSection({
@@ -234,7 +225,7 @@ export function ShareNetworkSection({
 interface JoinedViewProps {
   status: ShareStatus;
   onlineCount: number;
-  onOpenSettings: () => void;
+  onOpenSettings?: () => void;
   onLeave: () => void;
 }
 
@@ -245,20 +236,6 @@ function JoinedView({
   onLeave,
 }: JoinedViewProps) {
   const { t } = useTranslation();
-  const setRoutePreference = useSetRoutePreference();
-
-  const handleRouteChange = async (preference: ShareRoutePreference) => {
-    if (preference === status.routePreference) return;
-    try {
-      await setRoutePreference.mutateAsync(preference);
-      toast.success(t("share.toast.saved"), { closeButton: true });
-    } catch (error) {
-      toast.error(
-        t("share.toast.failed", { detail: extractErrorMessage(error) }),
-      );
-    }
-  };
-
   return (
     <div className="space-y-4">
       {/* 状态行 */}
@@ -334,46 +311,14 @@ function JoinedView({
         )}
       </div>
 
-      {/* 路由偏好 */}
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          {t("share.routePreference.title")}
-        </p>
-        <div
-          role="radiogroup"
-          aria-label={t("share.routePreference.title")}
-          className="flex flex-wrap gap-2"
-        >
-          {ROUTE_PREFERENCES.map((preference) => {
-            const active = status.routePreference === preference;
-            return (
-              <button
-                key={preference}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={setRoutePreference.isPending}
-                onClick={() => void handleRouteChange(preference)}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                  active
-                    ? "border-primary/40 bg-primary/10 text-primary font-medium"
-                    : "border-border bg-background/60 hover:bg-muted/50"
-                }`}
-              >
-                {active && <Check className="h-3.5 w-3.5" />}
-                {t(`share.routePreference.${preference}`)}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* 操作 */}
       <div className="flex flex-wrap gap-2 border-t border-border/50 pt-3">
-        <Button size="sm" variant="outline" onClick={onOpenSettings}>
-          <Settings2 className="mr-2 h-4 w-4" />
-          {t("share.peers.manage")}
-        </Button>
+        {onOpenSettings && (
+          <Button size="sm" variant="outline" onClick={onOpenSettings}>
+            <Settings2 className="mr-2 h-4 w-4" />
+            {t("share.peers.manage")}
+          </Button>
+        )}
         <Button size="sm" variant="destructive" onClick={onLeave}>
           <LogOut className="mr-2 h-4 w-4" />
           {t("share.leave.button")}

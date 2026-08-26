@@ -4,6 +4,8 @@
 //! - `share_blocked_peers`：被拉黑的节点
 //! - 出借用量归因复用 `proxy_request_logs`：出借侧使用按 peer 合成的
 //!   provider_id（`sharelend:<peer>:<provider_id>`），此处按前缀聚合。
+//! - 消费用量同样复用 `proxy_request_logs`：消费侧远端路由使用
+//!   provider_id（`share:<peer>`），此处按前缀聚合。
 
 use super::super::lock_conn;
 use crate::database::Database;
@@ -50,6 +52,9 @@ pub struct ShareBlockedPeerRow {
 
 /// 出借侧合成 provider_id 前缀（用量归因，见 proxy_request_logs.provider_id）
 pub const SHARE_LEND_PROVIDER_PREFIX: &str = "sharelend";
+
+/// 消费侧合成 provider_id 前缀（见 share::route_hook）
+pub const SHARE_REMOTE_PROVIDER_PREFIX: &str = "share";
 
 /// 组装出借侧合成 provider_id
 pub fn lend_provider_id(peer_id: &str, provider_id: &str) -> String {
@@ -254,6 +259,27 @@ impl Database {
         }
         Ok(result.into_iter().collect())
     }
+
+    /// 统计本机通过共享网络消费的 token 总量。
+    ///
+    /// 消费侧合成 provider_id 形如 `share:<peer>`；成功请求的 token 总量
+    /// 与出借侧保持同一口径：input + output + cache_read + cache_creation。
+    pub fn share_consumed_tokens(&self, since_epoch: i64) -> Result<i64, AppError> {
+        let conn = lock_conn!(self.conn);
+        let like = format!("{SHARE_REMOTE_PROVIDER_PREFIX}:%");
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(
+                    input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
+                 ), 0)
+                 FROM proxy_request_logs
+                 WHERE provider_id LIKE ?1 AND created_at >= ?2 AND status_code < 400",
+                params![like, since_epoch],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("统计共享网络消费用量失败: {e}")))?;
+        Ok(total)
+    }
 }
 
 #[cfg(test)]
@@ -316,7 +342,10 @@ mod tests {
                     ('r1', 'sharelend:peer-a:p1', 'claude', 'm', 10, 20, 0, 0, 1, 200, 100),
                     ('r2', 'sharelend:peer-a:p2', 'claude', 'm', 1, 2, 3, 4, 1, 200, 200),
                     ('r3', 'sharelend:peer-b:p1', 'claude', 'm', 100, 0, 0, 0, 1, 200, 100),
-                    ('r4', 'local-provider', 'claude', 'm', 999, 0, 0, 0, 1, 200, 100)",
+                    ('r4', 'local-provider', 'claude', 'm', 999, 0, 0, 0, 1, 200, 100),
+                    ('r5', 'share:peer-a', 'claude', 'm', 8, 5, 2, 1, 1, 200, 200),
+                    ('r6', 'share:peer-b', 'codex', 'm', 20, 10, 0, 0, 1, 200, 100),
+                    ('r7', 'share:peer-b', 'codex', 'm', 100, 100, 0, 0, 1, 500, 200)",
                 [],
             )
             .unwrap();
@@ -331,5 +360,9 @@ mod tests {
         assert_eq!(map.get("peer-a"), Some(&40));
         assert_eq!(map.get("peer-b"), Some(&100));
         assert!(!map.contains_key("local-provider"));
+        // 消费侧全时段：r5 16 + r6 30；失败的 r7 不计入
+        assert_eq!(db.share_consumed_tokens(0).unwrap(), 46);
+        // 从 epoch 150 起仅 r5
+        assert_eq!(db.share_consumed_tokens(150).unwrap(), 16);
     }
 }

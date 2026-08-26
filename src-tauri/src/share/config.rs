@@ -55,6 +55,13 @@ pub const META_REFRESH_SECS: u64 = 60;
 /// 出借侧能力查询路径
 pub const META_PATH: &str = "/__tokentap__/meta";
 
+/// 消费侧指定出借方 Provider 的内部请求头。
+/// 该头只在共享网络的 P2P 数据面中使用，forwarder 发往真实上游前会剥离。
+pub const HEADER_ROUTE_PROVIDER: &str = "x-tokentap-share-provider";
+
+/// 共享 Provider 连通性探测路径（不发起模型请求）。
+pub const PROVIDER_CHECK_PATH: &str = "/__tokentap__/provider-check";
+
 /// 组网数据目录（~/.tokentap/share 或 ~/.cc-switch/share，迁移期兼容）
 pub fn share_data_dir() -> PathBuf {
     let dir = crate::config::get_app_config_dir().join("share");

@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDevPricing";
 import type { McpServer, Provider, Settings } from "@/types";
+import type { ShareStatus } from "@/types/share";
 import {
   addProvider,
   deleteProvider,
@@ -42,6 +43,25 @@ const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
   http.get(MODELS_DEV_API_URL, () => success({})),
+  http.post(`${TAURI_ENDPOINT}/share_get_status`, () =>
+    success<ShareStatus>({
+      joined: false,
+      routePreference: "local_only",
+      routeTargets: {},
+      nodeName: "",
+      sharedProviderIds: [],
+      quotaScope: "daily",
+      quotaMaxTokens: 0,
+      quotaPerPeer: false,
+      providedTokens: 0,
+      consumedTokens: 0,
+      peers: [],
+      incomingRequests: [],
+      bridgeRunning: false,
+      relayConnected: false,
+      localPeerId: "",
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),

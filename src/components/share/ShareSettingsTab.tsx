@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  Activity,
   Ban,
+  Download,
   KeyRound,
   Loader2,
   LogOut,
+  RadioTower,
   RotateCcw,
   Save,
+  Share2,
   ShieldAlert,
   TriangleAlert,
+  Upload,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -27,6 +33,12 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   Table,
   TableBody,
   TableCell,
@@ -34,7 +46,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -45,7 +56,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { getAppLabel } from "@/config/appConfig";
+import { getAppLabel, PROXY_APP_IDS } from "@/config/appConfig";
 import type { AppId } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
 import {
@@ -59,28 +70,25 @@ import {
   useSetNodeName,
   useSetQuota,
   useSetRelayAddr,
+  useSetRoutePreference,
   useSetSharedProviders,
   useShareKeyStorage,
   useShareStatus,
   useUnblockPeer,
 } from "@/lib/query/share";
-import type { SharePeer, ShareStatus } from "@/types/share";
+import type {
+  SharePeer,
+  ShareRoutePreference,
+  ShareStatus,
+} from "@/types/share";
 
 /** 支持出借供应商的应用 */
-const SHARE_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-];
+const SHARE_APP_IDS: AppId[] = [...PROXY_APP_IDS];
 
 export function ShareSettingsTab() {
   const { t } = useTranslation();
   const { data: status, isLoading } = useShareStatus();
   const { data: keyStorage } = useShareKeyStorage();
-  const [activeShareTab, setActiveShareTab] = useState("overview");
 
   if (isLoading) {
     return (
@@ -91,6 +99,7 @@ export function ShareSettingsTab() {
   }
 
   const incomingCount = status?.incomingRequests.length ?? 0;
+  const joinedStatus = status?.joined ? status : undefined;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -112,87 +121,194 @@ export function ShareSettingsTab() {
         </div>
       )}
 
-      <Tabs
-        value={activeShareTab}
-        onValueChange={setActiveShareTab}
-        className="min-w-0 space-y-4"
+      <Accordion
+        type="multiple"
+        defaultValue={["nodes"]}
+        className="w-full space-y-4"
       >
-        <TabsList className="flex w-full max-w-full justify-start gap-1 overflow-x-auto rounded-lg p-1">
-          <TabsTrigger className="min-w-[110px] shrink-0" value="overview">
-            {t("share.settings.tabs.overview", { defaultValue: "概览" })}
-          </TabsTrigger>
-          <TabsTrigger className="min-w-[110px] shrink-0" value="sharing">
-            {t("share.settings.tabs.sharing", { defaultValue: "共享与配额" })}
-          </TabsTrigger>
-          <TabsTrigger className="min-w-[110px] shrink-0" value="nodes">
-            <span className="inline-flex items-center gap-1.5">
-              {t("share.settings.tabs.nodes", { defaultValue: "节点与审批" })}
+        <AccordionItem
+          value="nodes"
+          className="overflow-hidden rounded-xl glass-card"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:bg-muted/50 hover:no-underline data-[state=open]:bg-muted/50">
+            <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <Users className="h-5 w-5 shrink-0 text-blue-500" />
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold">
+                  {t("share.drawer.nodes.title", {
+                    defaultValue: "节点管理",
+                  })}
+                </h3>
+                <p className="text-sm font-normal text-muted-foreground">
+                  {t("share.drawer.nodes.description", {
+                    defaultValue: "管理网络状态、加入审批、成员与安全操作",
+                  })}
+                </p>
+              </div>
               {incomingCount > 0 && (
-                <Badge
-                  variant="destructive"
-                  className="px-1.5 py-0 text-[10px]"
-                >
-                  {incomingCount}
+                <Badge variant="destructive" className="ml-auto mr-2 shrink-0">
+                  {t("share.approval.badge", { count: incomingCount })}
                 </Badge>
               )}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger className="min-w-[110px] shrink-0" value="relay">
-            {t("share.settings.tabs.relay", { defaultValue: "Relay 与连接" })}
-          </TabsTrigger>
-          <TabsTrigger className="min-w-[110px] shrink-0" value="advanced">
-            {t("share.settings.tabs.advanced", { defaultValue: "高级" })}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="min-w-0 space-y-4">
-          <ShareNetworkSection
-            showApprovals={false}
-            onOpenSettings={() => setActiveShareTab("nodes")}
-          />
-          <NodeNameSection status={status} />
-        </TabsContent>
-
-        <TabsContent value="sharing" className="min-w-0 space-y-4">
-          <SharedProvidersSection status={status} />
-          <QuotaSection status={status} />
-        </TabsContent>
-
-        <TabsContent value="nodes" className="min-w-0 space-y-4">
-          {status?.role === "creator" && incomingCount > 0 && (
-            <SectionCard
-              title={t("share.approval.title")}
-              description={t("share.approval.verifyHint")}
-            >
-              <div className="space-y-3">
-                {status.incomingRequests.map((request) => (
-                  <ApprovalCard
-                    key={`${request.peerId}:${request.shortCode}`}
-                    request={request}
-                  />
-                ))}
-              </div>
-            </SectionCard>
-          )}
-          {status?.role && status.role !== "creator" && (
-            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-              {t("share.approval.creatorOnly", {
-                defaultValue: "只有网络创建者可以审批加入申请。",
-              })}
             </div>
-          )}
-          <PeerManagementSection status={status} />
-        </TabsContent>
+          </AccordionTrigger>
+          <AccordionContent className="space-y-4 border-t border-border/50 px-6 pb-6 pt-4">
+            <ShareNetworkSection showApprovals={false} />
+            <NodeNameSection status={joinedStatus} />
+            {joinedStatus?.role === "creator" && incomingCount > 0 && (
+              <SectionCard
+                title={t("share.approval.title")}
+                description={t("share.approval.verifyHint")}
+              >
+                <div className="space-y-3">
+                  {joinedStatus.incomingRequests.map((request) => (
+                    <ApprovalCard
+                      key={`${request.peerId}:${request.shortCode}`}
+                      request={request}
+                    />
+                  ))}
+                </div>
+              </SectionCard>
+            )}
+            {joinedStatus?.role && joinedStatus.role !== "creator" && (
+              <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                {t("share.approval.creatorOnly", {
+                  defaultValue: "只有网络创建者可以审批加入申请。",
+                })}
+              </div>
+            )}
+            <PeerManagementSection status={joinedStatus} />
+            <DangerZoneSection status={joinedStatus} />
+          </AccordionContent>
+        </AccordionItem>
 
-        <TabsContent value="relay" className="min-w-0 space-y-4">
-          <RelaySection status={status} />
-        </TabsContent>
+        <AccordionItem
+          value="sharing"
+          className="overflow-hidden rounded-xl glass-card"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:bg-muted/50 hover:no-underline data-[state=open]:bg-muted/50">
+            <div className="flex min-w-0 items-center gap-3 text-left">
+              <Share2 className="h-5 w-5 shrink-0 text-emerald-500" />
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold">
+                  {t("share.drawer.sharing.title", {
+                    defaultValue: "共享与配额",
+                  })}
+                </h3>
+                <p className="text-sm font-normal text-muted-foreground">
+                  {t("share.drawer.sharing.description", {
+                    defaultValue: "选择共享供应商并查看双向 Token 用量",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="space-y-4 border-t border-border/50 px-6 pb-6 pt-4">
+            <NetworkUsageSection status={joinedStatus} />
+            <RoutePreferenceSection status={joinedStatus} />
+            <SharedProvidersSection status={joinedStatus} />
+            <QuotaSection status={joinedStatus} />
+          </AccordionContent>
+        </AccordionItem>
 
-        <TabsContent value="advanced" className="min-w-0 space-y-4">
-          <DangerZoneSection status={status} />
-        </TabsContent>
-      </Tabs>
+        <AccordionItem
+          value="relay"
+          className="overflow-hidden rounded-xl glass-card"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:bg-muted/50 hover:no-underline data-[state=open]:bg-muted/50">
+            <div className="flex min-w-0 items-center gap-3 text-left">
+              <RadioTower className="h-5 w-5 shrink-0 text-cyan-500" />
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold">
+                  {t("share.drawer.relay.title", {
+                    defaultValue: "Relay 与连接",
+                  })}
+                </h3>
+                <p className="text-sm font-normal text-muted-foreground">
+                  {t("share.drawer.relay.description", {
+                    defaultValue: "查看连接状态并配置 P2P 失败时的 Relay",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="border-t border-border/50 px-6 pb-6 pt-4">
+            <RelaySection status={joinedStatus} />
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
+  );
+}
+
+const ROUTE_PREFERENCES: ShareRoutePreference[] = [
+  "local_only",
+  "local_first",
+  "network_first",
+  "network_only",
+];
+
+function RoutePreferenceSection({ status }: { status?: ShareStatus }) {
+  const { t } = useTranslation();
+  const setRoutePreference = useSetRoutePreference();
+  if (!status?.joined) return null;
+
+  const handleChange = async (preference: ShareRoutePreference) => {
+    if (preference === status.routePreference) return;
+    try {
+      await setRoutePreference.mutateAsync(preference);
+      toast.success(t("share.toast.saved"), { closeButton: true });
+    } catch (error) {
+      toast.error(
+        t("share.toast.failed", { detail: extractErrorMessage(error) }),
+      );
+    }
+  };
+
+  return (
+    <SectionCard
+      title={t("share.routePreference.title", {
+        defaultValue: "共享网络路由模式",
+      })}
+      description={t("share.routePreference.description", {
+        defaultValue:
+          "控制共享网络 Provider 是否加入本机代理路由；对 Claude、Codex、Gemini 和 GrokBuild 全局生效。",
+      })}
+    >
+      <div className="grid gap-2 sm:grid-cols-2">
+        {ROUTE_PREFERENCES.map((preference) => {
+          const active = status.routePreference === preference;
+          return (
+            <button
+              key={preference}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={setRoutePreference.isPending}
+              onClick={() => void handleChange(preference)}
+              className={`flex items-start gap-2 rounded-lg border px-3 py-3 text-left text-sm transition-colors ${
+                active
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background/60 hover:bg-muted/50"
+              }`}
+            >
+              <span
+                className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2 ${
+                  active
+                    ? "border-primary bg-primary ring-2 ring-primary/20"
+                    : "border-muted-foreground/50"
+                }`}
+              />
+              <span className="font-medium">
+                {t(`share.routePreference.${preference}`, {
+                  defaultValue: preference,
+                })}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -215,6 +331,68 @@ function SectionCard({ title, description, children }: SectionCardProps) {
       </div>
       {children}
     </section>
+  );
+}
+
+// ========== 共享网络双向 Token 统计 ==========
+
+function NetworkUsageSection({ status }: { status?: ShareStatus }) {
+  const { t } = useTranslation();
+  const periodLabel = status
+    ? status.quotaScope === "monthly"
+      ? t("share.quota.monthly")
+      : t("share.quota.daily")
+    : t("share.quota.daily");
+
+  return (
+    <SectionCard
+      title={t("share.networkUsage.title", {
+        defaultValue: "共享网络 Token 统计",
+      })}
+      description={t("share.networkUsage.description", {
+        period: periodLabel,
+        defaultValue: "按当前配额周期（{{period}}）统计成功请求的 Token。",
+      })}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+            <Upload className="h-4 w-4" />
+            {t("share.networkUsage.provided", { defaultValue: "已提供" })}
+          </div>
+          <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">
+            {(status?.providedTokens ?? 0).toLocaleString()}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("share.networkUsage.providedHint", {
+              defaultValue: "其他节点通过本机供应商消耗的 Token",
+            })}
+          </p>
+        </div>
+        <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
+            <Download className="h-4 w-4" />
+            {t("share.networkUsage.consumed", { defaultValue: "已消耗" })}
+          </div>
+          <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">
+            {(status?.consumedTokens ?? 0).toLocaleString()}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("share.networkUsage.consumedHint", {
+              defaultValue: "本机通过其他节点供应商消耗的 Token",
+            })}
+          </p>
+        </div>
+      </div>
+      {!status && (
+        <div className="flex items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+          <Activity className="h-4 w-4" />
+          {t("share.networkUsage.joinRequired", {
+            defaultValue: "加入共享网络后开始统计。",
+          })}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 

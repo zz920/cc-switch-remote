@@ -125,6 +125,33 @@ pub async fn share_set_route_preference(
     state.share_manager.set_route_preference(preference).await
 }
 
+/// 设置某个应用实际参与共享路由的远端 Provider target。
+#[tauri::command]
+pub async fn share_set_route_targets(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    targets: Vec<String>,
+) -> Result<(), String> {
+    state
+        .share_manager
+        .set_route_targets(app_type, targets)
+        .await
+}
+
+/// 检测远端共享 Provider 的连通性。
+#[tauri::command]
+pub async fn share_test_provider(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    peer_id: String,
+    provider_id: String,
+) -> Result<crate::share::types::ShareProviderCheckResult, String> {
+    state
+        .share_manager
+        .test_remote_provider(app_type, peer_id, provider_id)
+        .await
+}
+
 /// 设置 relay 地址覆盖（None = 恢复官方默认）
 #[tauri::command]
 pub async fn share_set_relay_addr(

@@ -344,7 +344,7 @@
     "tabAuth": "认证",
     "tabAdvanced": "高级",
     "tabProxy": "路由",
-    "tabShare": "共享网络",
+    "tabShare": "共享",
     "authCenter": {
       "title": "OAuth 认证中心",
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
@@ -3250,6 +3250,48 @@
   "share": {
     "title": "共享网络",
     "intro": "加入或创建一个共享网络，与信任的节点互相出借 AI 供应商额度。所有加入申请都需管理员审批。",
+    "drawer": {
+      "nodes": {
+        "title": "节点管理",
+        "description": "管理网络状态、加入审批、成员与安全操作"
+      },
+      "sharing": {
+        "title": "共享与配额",
+        "description": "选择共享供应商并查看双向 Token 用量"
+      },
+      "relay": {
+        "title": "Relay 与连接",
+        "description": "查看连接状态并配置 P2P 失败时的 Relay"
+      }
+    },
+    "networkUsage": {
+      "title": "共享网络 Token 统计",
+      "description": "按当前配额周期（{{period}}）统计成功请求的 Token。",
+      "provided": "已提供",
+      "providedHint": "其他节点通过本机供应商消耗的 Token",
+      "consumed": "已消耗",
+      "consumedHint": "本机通过其他节点供应商消耗的 Token",
+      "joinRequired": "加入共享网络后开始统计。"
+    },
+    "networkProvider": {
+      "title": "共享网络 Provider",
+      "description": "选择在线节点为 {{app}} 提供的远端 Provider；本地 Provider 不会被替换。",
+      "active": "正在使用",
+      "waiting": "可配置",
+      "noneAvailable": "当前没有在线节点为 {{app}} 提供可用 Provider。",
+      "providerCount": "{{count}} 个 Provider",
+      "selected": "已选择",
+      "selectProvider": "选择 {{name}}",
+      "modelsUnknown": "模型信息待刷新",
+      "use": "使用",
+      "check": "检测连通",
+      "checkPassed": "共享 Provider 连通性正常",
+      "usage": "查看用量",
+      "refresh": "刷新共享 Provider",
+      "saved": "共享 Provider 路由已更新",
+      "proxyRequired": "共享 Provider 已选择，但 {{app}} 需要先开启本地路由接管，请求才会经过共享网络。",
+      "openRouting": "配置路由"
+    },
     "status": {
       "connected": "已连接",
       "connectedSummary": "已连接「{{id}}」· {{count}} 个节点在线",
@@ -3296,7 +3338,8 @@
       "shortCode": "短码",
       "verifyHint": "请与申请人带外核对短码，确认无误后再批准。",
       "approve": "批准",
-      "reject": "拒绝"
+      "reject": "拒绝",
+      "creatorOnly": "只有网络创建者可以审批加入申请。"
     },
     "peers": {
       "title": "节点列表",
@@ -3316,13 +3359,16 @@
       "block": "拉黑",
       "unblock": "解除拉黑",
       "blockConfirmTitle": "拉黑节点",
-      "blockConfirmMessage": "确定要拉黑节点「{{name}}」吗？拉黑后该节点将立即无法使用你共享的资源。"
+      "blockConfirmMessage": "确定要拉黑节点「{{name}}」吗？拉黑后该节点将立即无法使用你共享的资源。",
+      "unnamed": "未命名节点"
     },
     "routePreference": {
-      "title": "路由偏好",
-      "local_first": "本地优先",
-      "network_first": "网络节点优先",
-      "network_only": "仅网络节点"
+      "title": "共享网络路由模式",
+      "description": "控制共享网络 Provider 是否加入本机代理路由；对 Claude、Codex、Gemini 和 GrokBuild 全局生效。",
+      "local_only": "关闭共享网络",
+      "local_first": "本地优先，共享网络作为后备",
+      "network_first": "共享网络优先，本地作为后备",
+      "network_only": "仅使用共享网络"
     },
     "quota": {
       "title": "用量限额",

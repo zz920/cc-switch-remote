@@ -3250,6 +3250,48 @@
   "share": {
     "title": "Share Network",
     "intro": "Join or create a share network to lend AI provider quota with trusted nodes. Every join request requires admin approval.",
+    "drawer": {
+      "nodes": {
+        "title": "Peer Management",
+        "description": "Manage network status, join approvals, peers, and security actions"
+      },
+      "sharing": {
+        "title": "Sharing & Quotas",
+        "description": "Choose shared providers and review bidirectional token usage"
+      },
+      "relay": {
+        "title": "Relay & Connections",
+        "description": "Inspect connectivity and configure Relay fallback for P2P"
+      }
+    },
+    "networkUsage": {
+      "title": "Share Network Token Usage",
+      "description": "Successful request tokens in the current quota period ({{period}}).",
+      "provided": "Provided",
+      "providedHint": "Tokens other peers consumed through your providers",
+      "consumed": "Consumed",
+      "consumedHint": "Tokens this device consumed through other peers",
+      "joinRequired": "Usage tracking starts after joining a share network."
+    },
+    "networkProvider": {
+      "title": "Share Network Provider",
+      "description": "Choose remote Providers offered by online peers for {{app}}; local Providers remain unchanged.",
+      "active": "In use",
+      "waiting": "Available to configure",
+      "noneAvailable": "No online peer currently provides a usable Provider for {{app}}.",
+      "providerCount": "{{count}} Provider(s)",
+      "selected": "Selected",
+      "selectProvider": "Select {{name}}",
+      "modelsUnknown": "Model list will refresh",
+      "use": "Use",
+      "check": "Test connection",
+      "checkPassed": "Shared Provider is reachable",
+      "usage": "View usage",
+      "refresh": "Refresh shared Providers",
+      "saved": "Shared Provider routing updated",
+      "proxyRequired": "Shared Providers are selected, but {{app}} must enable local routing takeover before requests can use the share network.",
+      "openRouting": "Configure Routing"
+    },
     "status": {
       "connected": "Connected",
       "connectedSummary": "Connected to \"{{id}}\" · {{count}} peers online",
@@ -3296,7 +3338,8 @@
       "shortCode": "Code",
       "verifyHint": "Verify the short code with the requester out-of-band before approving.",
       "approve": "Approve",
-      "reject": "Reject"
+      "reject": "Reject",
+      "creatorOnly": "Only the network creator can approve join requests."
     },
     "peers": {
       "title": "Peers",
@@ -3316,13 +3359,16 @@
       "block": "Block",
       "unblock": "Unblock",
       "blockConfirmTitle": "Block Peer",
-      "blockConfirmMessage": "Block peer \"{{name}}\"? It will immediately lose access to the resources you share."
+      "blockConfirmMessage": "Block peer \"{{name}}\"? It will immediately lose access to the resources you share.",
+      "unnamed": "Unnamed peer"
     },
     "routePreference": {
-      "title": "Route Preference",
-      "local_first": "Local first",
-      "network_first": "Network first",
-      "network_only": "Network only"
+      "title": "Share network routing mode",
+      "description": "Control whether shared Providers join the local proxy route. This applies globally to Claude, Codex, Gemini, and GrokBuild.",
+      "local_only": "Disable share network",
+      "local_first": "Local first, share network as fallback",
+      "network_first": "Share network first, local as fallback",
+      "network_only": "Share network only"
     },
     "quota": {
       "title": "Usage Quota",

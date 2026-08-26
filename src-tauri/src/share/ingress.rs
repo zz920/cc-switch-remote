@@ -12,11 +12,13 @@ use axum::{extract::State, middleware, response::Response, Router};
 use http::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use crate::database::Database;
+use crate::provider::Provider;
 use crate::proxy::failover_switch::FailoverSwitchManager;
 use crate::proxy::provider_router::ProviderRouter;
 use crate::proxy::providers::codex_chat_history::CodexChatHistoryStore;
@@ -27,11 +29,12 @@ use crate::proxy::types::{ProxyConfig, ProxyStatus};
 use super::auth::{body_sha256_hex, verify_request, NonceCache};
 use super::bridge::error_response;
 use super::config::{
-    AUTH_WINDOW_SECS, HEADER_AUTH, HEADER_PREFIX, META_PATH, NONCE_CACHE_CAPACITY,
+    AUTH_WINDOW_SECS, HEADER_AUTH, HEADER_PREFIX, HEADER_ROUTE_PROVIDER, META_PATH,
+    NONCE_CACHE_CAPACITY, PROVIDER_CHECK_PATH,
 };
 use super::quota::check_lend_quota;
 use super::route_hook::LenderRouteHook;
-use super::types::ShareQuotaConfig;
+use super::types::{ShareProviderInfo, ShareQuotaConfig};
 
 /// 出借准入上下文（ShareManager 共享持有，peer 维度）
 #[derive(Clone)]
@@ -222,6 +225,12 @@ async fn admission_mw(
         return meta_response(&ctx).await;
     }
 
+    // 共享 Provider 的连通性检查只探测出借方配置的 base URL，
+    // 不发送模型请求、不计 token；仍要求完整 HMAC 和 Provider 白名单。
+    if path == PROVIDER_CHECK_PATH {
+        return provider_check_response(&ctx, &parts).await;
+    }
+
     // 4. 白名单准入（按路径推断的应用类型）
     let app_type = infer_app_type(&path);
     let whitelisted_app = {
@@ -260,7 +269,7 @@ async fn admission_mw(
     // 6. 出口净化：剥离所有组网头部后重建请求
     let mut builder = http::Request::builder().method(method).uri(parts.uri);
     for (name, value) in parts.headers.iter() {
-        if !name.as_str().starts_with(HEADER_PREFIX) {
+        if !name.as_str().starts_with(HEADER_PREFIX) || name.as_str() == HEADER_ROUTE_PROVIDER {
             builder = builder.header(name, value);
         }
     }
@@ -274,13 +283,80 @@ async fn admission_mw(
     next.run(sanitized).await
 }
 
+async fn provider_check_response(ctx: &AdmissionCtx, parts: &http::request::Parts) -> Response {
+    let Some(provider_id) = parts
+        .headers
+        .get(HEADER_ROUTE_PROVIDER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return error_response(StatusCode::BAD_REQUEST, "缺少共享 Provider target");
+    };
+    let Some(app_type) = parts
+        .uri
+        .query()
+        .and_then(|query| query.split('&').find_map(|item| item.strip_prefix("app=")))
+    else {
+        return error_response(StatusCode::BAD_REQUEST, "缺少共享 Provider 应用类型");
+    };
+    let allowed = ctx
+        .whitelist
+        .read()
+        .map(|whitelist| whitelist.contains(&format!("{app_type}:{provider_id}")))
+        .unwrap_or(false);
+    if !allowed {
+        return error_response(StatusCode::FORBIDDEN, "共享 Provider 不在出借白名单中");
+    }
+    let Ok(Some(provider)) = ctx.db.get_provider_by_id(provider_id, app_type) else {
+        return error_response(StatusCode::NOT_FOUND, "共享 Provider 不存在");
+    };
+    if provider.category.as_deref() == Some("official") {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "官方 Provider 不允许通过共享网络出借",
+        );
+    }
+    let Ok(app) = crate::app_config::AppType::from_str(app_type) else {
+        return error_response(StatusCode::BAD_REQUEST, "不支持的共享 Provider 应用类型");
+    };
+    let Ok(config) = ctx.db.get_stream_check_config() else {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "读取连通性检查配置失败");
+    };
+    let result = match crate::services::stream_check::StreamCheckService::check_with_retry(
+        &app, &provider, &config, None,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => crate::services::stream_check::StreamCheckResult {
+            status: crate::services::stream_check::HealthStatus::Failed,
+            success: false,
+            message: error.to_string(),
+            response_time_ms: None,
+            http_status: None,
+            model_used: String::new(),
+            tested_at: chrono::Utc::now().timestamp(),
+            retry_count: 0,
+            error_category: None,
+        },
+    };
+    let body = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+    let mut response = Response::new(axum::body::Body::from(body));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
 /// 能力通告应答
 async fn meta_response(ctx: &AdmissionCtx) -> Response {
+    let whitelist = ctx.whitelist.read().map(|w| w.clone()).unwrap_or_default();
+    let providers = shared_provider_infos(&ctx.db, &whitelist);
     let shared_apps: Vec<String> = {
-        let whitelist = ctx.whitelist.read().map(|w| w.clone()).unwrap_or_default();
-        let mut apps: Vec<String> = whitelist
+        let mut apps: Vec<String> = providers
             .iter()
-            .filter_map(|entry| entry.split(':').next().map(|s| s.to_string()))
+            .map(|provider| provider.app.clone())
             .collect();
         apps.sort();
         apps.dedup();
@@ -294,6 +370,7 @@ async fn meta_response(ctx: &AdmissionCtx) -> Response {
         "name": ctx.node_name,
         "peerId": ctx.peer_id,
         "sharedApps": shared_apps,
+        "providers": providers,
         "quota": {
             "scope": scope,
             "maxTokens": max_tokens,
@@ -307,6 +384,76 @@ async fn meta_response(ctx: &AdmissionCtx) -> Response {
         http::HeaderValue::from_static("application/json"),
     );
     resp
+}
+
+/// 生成可安全公开给网络成员的 Provider 摘要。
+/// 这里只返回应用、Provider 名称和模型，不暴露 settings/auth/API key。
+fn shared_provider_infos(db: &Database, whitelist: &HashSet<String>) -> Vec<ShareProviderInfo> {
+    let mut out = Vec::new();
+    for entry in whitelist {
+        let Some((app, provider_id)) = entry.split_once(':') else {
+            continue;
+        };
+        let Ok(Some(provider)) = db.get_provider_by_id(provider_id, app) else {
+            continue;
+        };
+        if provider.category.as_deref() == Some("official") {
+            continue;
+        }
+        out.push(ShareProviderInfo {
+            app: app.to_string(),
+            provider_id: provider.id.clone(),
+            name: provider.name.clone(),
+            models: provider_models(&provider),
+        });
+    }
+    out.sort_by(|a, b| a.app.cmp(&b.app).then(a.name.cmp(&b.name)));
+    out
+}
+
+fn provider_models(provider: &Provider) -> Vec<String> {
+    let mut models = provider
+        .settings_config
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|items| items.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("model")
+                        .or_else(|| item.get("id"))
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if models.is_empty() {
+        if let Some(config) = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+        {
+            for line in config.lines() {
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if key.trim() != "model" {
+                    continue;
+                }
+                let model = value.trim().trim_matches('"').trim_matches('\'');
+                if !model.is_empty() {
+                    models.push(model.to_string());
+                }
+                break;
+            }
+        }
+    }
+    models.sort();
+    models.dedup();
+    models.truncate(12);
+    models
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ import type {
   RequestJoinResult,
   ShareKeyStorage,
   ShareQuotaConfig,
+  ShareProviderCheckResult,
   ShareStatus,
 } from "@/types/share";
 
@@ -84,6 +85,20 @@ export const shareApi = {
   /** 设置消费侧路由偏好 */
   async setRoutePreference(preference: string): Promise<void> {
     return invoke("share_set_route_preference", { preference });
+  },
+
+  /** 设置某个应用实际参与路由的共享 Provider target */
+  async setRouteTargets(appType: string, targets: string[]): Promise<void> {
+    return invoke("share_set_route_targets", { appType, targets });
+  },
+
+  /** 检测远端共享 Provider 连通性 */
+  async testProvider(
+    appType: string,
+    peerId: string,
+    providerId: string,
+  ): Promise<ShareProviderCheckResult> {
+    return invoke("share_test_provider", { appType, peerId, providerId });
   },
 
   /** 设置 relay 地址（null = 恢复官方默认） */
