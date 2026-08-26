@@ -66,6 +66,11 @@ pub struct ShareManagerInner {
     quota: Arc<AsyncRwLock<ShareQuotaConfig>>,
     /// 节点显示名
     node_name: AsyncRwLock<String>,
+    /// 当前配置的 relay 服务 PeerId（relay 不属于共享网络成员）
+    relay_peer_id: AsyncRwLock<Option<String>>,
+    /// relay 控制连接/预约状态，供连接诊断页展示
+    relay_connected: AsyncRwLock<bool>,
+    relay_transport: AsyncRwLock<Option<String>>,
     /// 已知节点（含离线，key = peer_id base58）
     peers: Arc<AsyncRwLock<HashMap<String, PeerRuntime>>>,
     /// 加入申请（出借方待审批，key = peer_id）
@@ -119,6 +124,9 @@ impl ShareManager {
                     per_peer: true,
                 })),
                 node_name: AsyncRwLock::new(String::new()),
+                relay_peer_id: AsyncRwLock::new(None),
+                relay_connected: AsyncRwLock::new(false),
+                relay_transport: AsyncRwLock::new(None),
                 peers: Arc::new(AsyncRwLock::new(HashMap::new())),
                 join_requests: Arc::new(AsyncRwLock::new(HashMap::new())),
                 join_responders: AsyncRwLock::new(HashMap::new()),
@@ -248,6 +256,12 @@ impl ShareManager {
             config::RENDEZVOUS_NAMESPACE_PREFIX,
             row.share_id_hash
         );
+        *self.inner.relay_peer_id.write().await = relay_addrs
+            .iter()
+            .find_map(extract_peer_id)
+            .map(|peer| peer.to_base58());
+        *self.inner.relay_connected.write().await = false;
+        *self.inner.relay_transport.write().await = None;
         let swarm = self.inner.swarm.read().await;
         let Some(swarm) = swarm.as_ref() else {
             return Err("swarm 未运行".to_string());
@@ -340,6 +354,9 @@ impl ShareManager {
             };
         }
         self.inner.peers.write().await.clear();
+        *self.inner.relay_peer_id.write().await = None;
+        *self.inner.relay_connected.write().await = false;
+        *self.inner.relay_transport.write().await = None;
         self.inner.join_requests.write().await.clear();
         self.inner.join_responders.write().await.clear();
         self.inner.lend_states.write().await.clear();
@@ -401,7 +418,7 @@ impl ShareManager {
         }
         let hash = auth::share_id_hash(&share_id);
 
-        // 以临时网络配置启动 swarm（发现用；审批通过前无 key，无法消费）
+        // 以待审批网络配置启动 swarm（仅用于发现；审批通过前无 key，无法消费）
         self.ensure_swarm().await?;
         let short_code = auth::generate_short_code();
         let expires_at = chrono::Utc::now().timestamp() + config::JOIN_REQUEST_TTL_SECS;
@@ -413,6 +430,12 @@ impl ShareManager {
                 "未配置 relay 地址：请在设置中填写 relay 地址（或等待官方 relay 上线）".to_string(),
             );
         }
+        *self.inner.relay_peer_id.write().await = relay_addrs
+            .iter()
+            .find_map(extract_peer_id)
+            .map(|peer| peer.to_base58());
+        *self.inner.relay_connected.write().await = false;
+        *self.inner.relay_transport.write().await = None;
         {
             let swarm = self.inner.swarm.read().await;
             let swarm = swarm.as_ref().expect("swarm just started");
@@ -473,9 +496,10 @@ impl ShareManager {
 
             let peers: Vec<String> = {
                 let peers = self.inner.peers.read().await;
+                let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
                 peers
                     .iter()
-                    .filter(|(_, p)| p.online)
+                    .filter(|(id, p)| p.online && relay_peer_id.as_deref() != Some(id.as_str()))
                     .map(|(id, _)| id.clone())
                     .collect()
             };
@@ -579,6 +603,9 @@ impl ShareManager {
 
     /// 出借方审批加入申请
     pub async fn approve_join(&self, peer_id: &str) -> Result<(), String> {
+        if !self.is_creator().await {
+            return Err("只有网络创建者可以审批加入申请".to_string());
+        }
         let responder = self.inner.join_responders.write().await.remove(peer_id);
         let Some(responder) = responder else {
             return Err("加入申请不存在或已过期".to_string());
@@ -605,6 +632,9 @@ impl ShareManager {
 
     /// 出借方拒绝加入申请
     pub async fn reject_join(&self, peer_id: &str, reason: Option<String>) -> Result<(), String> {
+        if !self.is_creator().await {
+            return Err("只有网络创建者可以处理加入申请".to_string());
+        }
         let responder = self.inner.join_responders.write().await.remove(peer_id);
         let Some(responder) = responder else {
             return Err("加入申请不存在或已过期".to_string());
@@ -686,6 +716,11 @@ impl ShareManager {
 
     /// 拉黑节点（即时生效：准入检查每次请求都查黑名单）
     pub async fn block_peer(&self, peer_id: &str, reason: Option<String>) -> Result<(), String> {
+        if self.local_peer_id().await == peer_id
+            || self.inner.relay_peer_id.read().await.as_deref() == Some(peer_id)
+        {
+            return Err("不能拉黑本机或 relay 服务节点".to_string());
+        }
         self.inner
             .db
             .block_share_peer(peer_id, reason.as_deref())
@@ -740,12 +775,22 @@ impl ShareManager {
 
     /// 设置 relay 地址覆盖
     pub async fn set_relay_addr(&self, addr: Option<String>) -> Result<(), String> {
-        if let Some(a) = addr.as_deref() {
-            a.parse::<Multiaddr>()
-                .map_err(|e| format!("relay 地址格式不正确: {e}"))?;
+        let normalized = normalize_relay_addr_list(addr.as_deref())?;
+        let persisted = normalized.as_deref().map(str::to_string);
+        std::fs::create_dir_all(config::share_data_dir()).map_err(|e| e.to_string())?;
+        let path = config::relay_config_path();
+        match persisted.as_deref() {
+            Some(value) => std::fs::write(&path, value).map_err(|e| e.to_string())?,
+            None => {
+                if path.exists() {
+                    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                }
+            }
         }
-        self.update_network_row(|row| row.relay_addr = addr.clone())
-            .await?;
+        if self.inner.network.read().await.is_some() {
+            self.update_network_row(|row| row.relay_addr = persisted.clone())
+                .await?;
+        }
         // 热更新 swarm 网络配置
         if let Some(row) = self.inner.network.read().await.clone() {
             if self.inner.swarm.read().await.is_some() {
@@ -778,6 +823,16 @@ impl ShareManager {
         Ok(())
     }
 
+    async fn is_creator(&self) -> bool {
+        self.inner
+            .network
+            .read()
+            .await
+            .as_ref()
+            .map(|row| ShareRole::from_str_lossy(&row.role) == ShareRole::Creator)
+            .unwrap_or(false)
+    }
+
     // ==================== 状态 ====================
 
     /// 完整组网状态（share_get_status）
@@ -794,10 +849,13 @@ impl ShareManager {
             .collect();
         let bridge_running = self.inner.bridge.read().await.is_some();
         let local_peer_id = self.local_peer_id().await;
+        let relay_connected = *self.inner.relay_connected.read().await;
+        let relay_transport = self.inner.relay_transport.read().await.clone();
 
         let mut peers_out: Vec<SharePeerInfo> = Vec::new();
         let blocked = self.inner.db.list_share_blocked_peers().unwrap_or_default();
         let blocked_set: HashSet<String> = blocked.iter().map(|b| b.peer_id.clone()).collect();
+        let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
 
         {
             let peers = self.inner.peers.read().await;
@@ -806,6 +864,9 @@ impl ShareManager {
                 (q.scope.clone(), q.max_tokens)
             };
             for (peer_id, p) in peers.iter() {
+                if relay_peer_id.as_deref() == Some(peer_id.as_str()) {
+                    continue;
+                }
                 let (tokens_used, quota_remaining) =
                     quota::peer_quota_status(&self.inner.db, peer_id, &scope, max_tokens)
                         .unwrap_or((0, None));
@@ -823,6 +884,9 @@ impl ShareManager {
         }
         // 黑名单中不在线列表里的节点也展示
         for b in blocked {
+            if relay_peer_id.as_deref() == Some(b.peer_id.as_str()) {
+                continue;
+            }
             if !peers_out.iter().any(|p| p.peer_id == b.peer_id) {
                 peers_out.push(SharePeerInfo {
                     peer_id: b.peer_id,
@@ -849,7 +913,7 @@ impl ShareManager {
                     .as_str()
                     .to_string(),
                 node_name: row.node_name,
-                relay_addr: row.relay_addr,
+                relay_addr: row.relay_addr.or_else(|| load_global_relay_addr()),
                 shared_provider_ids: row.shared_provider_ids,
                 quota_scope: row.quota_scope,
                 quota_max_tokens: row.quota_max_tokens,
@@ -862,10 +926,13 @@ impl ShareManager {
                 }),
                 incoming_requests: requests,
                 bridge_running,
+                relay_connected,
+                relay_transport,
                 local_peer_id,
             },
             None => ShareNetworkStatus {
                 joined: false,
+                relay_addr: load_global_relay_addr(),
                 peers: peers_out,
                 pending_join: pending.map(|p| PendingJoinInfo {
                     share_id: p.share_id,
@@ -874,6 +941,8 @@ impl ShareManager {
                 }),
                 incoming_requests: requests,
                 bridge_running,
+                relay_connected,
+                relay_transport,
                 local_peer_id,
                 ..Default::default()
             },
@@ -900,6 +969,11 @@ impl ShareManager {
             let Some(event) = rx.recv().await else { return };
             match event {
                 SwarmEventOut::PeerConnected { peer_id, direct } => {
+                    if self.inner.relay_peer_id.read().await.as_deref()
+                        == Some(peer_id.to_base58().as_str())
+                    {
+                        continue;
+                    }
                     {
                         let mut peers = self.inner.peers.write().await;
                         let entry = peers.entry(peer_id.to_base58()).or_insert(PeerRuntime {
@@ -920,6 +994,11 @@ impl ShareManager {
                     });
                 }
                 SwarmEventOut::PeerDisconnected { peer_id } => {
+                    if self.inner.relay_peer_id.read().await.as_deref()
+                        == Some(peer_id.to_base58().as_str())
+                    {
+                        continue;
+                    }
                     {
                         let mut peers = self.inner.peers.write().await;
                         if let Some(p) = peers.get_mut(&peer_id.to_base58()) {
@@ -930,6 +1009,11 @@ impl ShareManager {
                     self.sync_route_table().await;
                 }
                 SwarmEventOut::PeerIdentified { peer_id, name } => {
+                    if self.inner.relay_peer_id.read().await.as_deref()
+                        == Some(peer_id.to_base58().as_str())
+                    {
+                        continue;
+                    }
                     let mut peers = self.inner.peers.write().await;
                     let entry = peers.entry(peer_id.to_base58()).or_insert(PeerRuntime {
                         name: String::new(),
@@ -953,22 +1037,27 @@ impl ShareManager {
                     respond,
                 } => {
                     let pid = peer_id.to_base58();
-                    // 无头/自动化测试模式：环境变量开启后自动批准加入申请
-                    // （生产环境严禁开启；仅用于容器化测试等无人值守场景）
-                    if auto_approve_enabled() {
-                        log::warn!(
-                            "[Share] TOKENTAP_AUTO_APPROVE 已开启，自动批准来自 {pid}（{}）的加入申请",
-                            request.node_name
-                        );
-                        let key = self.inner.share_key.read().await.clone();
-                        let Some(key) = key else {
-                            log::error!("[Share] 网络密钥不可用，无法自动批准");
-                            continue;
-                        };
+                    if !self.is_creator().await {
                         let _ = respond.send(JoinResponseWire {
-                            accepted: true,
-                            share_key: Some(key),
-                            reason: Some("auto-approved".to_string()),
+                            accepted: false,
+                            share_key: None,
+                            reason: Some("只有网络创建者可以审批加入申请".to_string()),
+                        });
+                        continue;
+                    }
+                    let duplicate = self
+                        .inner
+                        .join_requests
+                        .read()
+                        .await
+                        .get(&pid)
+                        .map(|existing| existing.short_code == request.short_code)
+                        .unwrap_or(false);
+                    if duplicate {
+                        let _ = respond.send(JoinResponseWire {
+                            accepted: false,
+                            share_key: None,
+                            reason: Some("已有相同加入申请待审批".to_string()),
                         });
                         continue;
                     }
@@ -1009,7 +1098,12 @@ impl ShareManager {
                         }
                     });
                 }
-                SwarmEventOut::RelayState { connected } => {
+                SwarmEventOut::RelayState {
+                    connected,
+                    transport,
+                } => {
+                    *self.inner.relay_connected.write().await = connected;
+                    *self.inner.relay_transport.write().await = transport;
                     log::info!(
                         "[Share] relay 状态: {}",
                         if connected { "已连接" } else { "断开" }
@@ -1054,9 +1148,10 @@ impl ShareManager {
     /// 同步消费侧路由快照（online + 未拉黑节点）
     async fn sync_route_table(&self) {
         let peers = self.inner.peers.read().await;
+        let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
         let remotes: Vec<RemotePeerRoute> = peers
             .iter()
-            .filter(|(_, p)| p.online)
+            .filter(|(id, p)| p.online && relay_peer_id.as_deref() != Some(id.as_str()))
             .map(|(id, p)| RemotePeerRoute {
                 peer_id: id.clone(),
                 name: p.name.clone(),
@@ -1081,9 +1176,10 @@ impl ShareManager {
             }
             let peers: Vec<String> = {
                 let peers = self.inner.peers.read().await;
+                let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
                 peers
                     .iter()
-                    .filter(|(_, p)| p.online)
+                    .filter(|(id, p)| p.online && relay_peer_id.as_deref() != Some(id.as_str()))
                     .map(|(id, _)| id.clone())
                     .collect()
             };
@@ -1095,6 +1191,9 @@ impl ShareManager {
 
     /// 查询单个节点的能力通告并更新路由表
     async fn refresh_peer_meta(&self, peer_id: &str) {
+        if self.inner.relay_peer_id.read().await.as_deref() == Some(peer_id) {
+            return;
+        }
         if self.inner.share_key.read().await.is_none() {
             return;
         }
@@ -1226,37 +1325,24 @@ impl ShareManager {
     }
 }
 
-/// 是否开启自动审批（仅测试用途）
-fn auto_approve_enabled() -> bool {
-    std::env::var("TOKENTAP_AUTO_APPROVE")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"))
-        .unwrap_or(false)
-}
-
-/// 解析 relay 地址（配置覆盖 > 官方默认）
-/// 解析 relay 地址（配置覆盖 > 环境变量 TOKENTAP_RELAY_ADDRS > 官方默认）
+/// 解析 relay 地址（网络覆盖 > 已保存配置 > 环境变量 > 官方默认）。
 fn resolve_relay_addrs(override_addr: Option<&str>) -> Result<Vec<Multiaddr>, String> {
     let mut out = Vec::new();
     match override_addr {
         Some(addr) if !addr.trim().is_empty() => {
-            out.push(
-                addr.trim()
-                    .parse::<Multiaddr>()
-                    .map_err(|e| format!("relay 地址格式不正确: {e}"))?,
-            );
+            out.extend(parse_relay_addr_list(addr, "relay 地址")?);
         }
         _ => {
-            // 环境变量（运维/测试注入）：逗号分隔
-            if let Ok(env_addrs) = std::env::var("TOKENTAP_RELAY_ADDRS") {
-                for addr in env_addrs
-                    .split(',')
-                    .map(|a| a.trim())
-                    .filter(|a| !a.is_empty())
-                {
-                    out.push(
-                        addr.parse::<Multiaddr>()
-                            .map_err(|e| format!("环境变量中的 relay 地址无效: {e}"))?,
-                    );
+            if let Some(global_addr) = load_global_relay_addr() {
+                out.extend(parse_relay_addr_list(&global_addr, "已保存的 relay 地址")?);
+            }
+            // 环境变量（运维/测试注入）：逗号/换行分隔
+            if out.is_empty() {
+                if let Ok(env_addrs) = std::env::var("TOKENTAP_RELAY_ADDRS") {
+                    out.extend(parse_relay_addr_list(
+                        &env_addrs,
+                        "环境变量中的 relay 地址",
+                    )?);
                 }
             }
             if out.is_empty() {
@@ -1269,5 +1355,137 @@ fn resolve_relay_addrs(override_addr: Option<&str>) -> Result<Vec<Multiaddr>, St
             }
         }
     }
+    out.sort_by_key(|addr| {
+        if addr
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::QuicV1))
+        {
+            0
+        } else {
+            1
+        }
+    });
+    out.dedup();
     Ok(out)
+}
+
+fn parse_relay_addr_list(value: &str, source: &str) -> Result<Vec<Multiaddr>, String> {
+    let parsed = value
+        .split([',', '\n', '\r'])
+        .map(str::trim)
+        .filter(|addr| !addr.is_empty())
+        .map(|addr| {
+            addr.parse::<Multiaddr>()
+                .map_err(|error| format!("{source}无效: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut addresses = Vec::with_capacity(parsed.len() * 2);
+    for addr in parsed {
+        if let Some(quic) = quic_variant(&addr) {
+            addresses.push(quic);
+        }
+        addresses.push(addr);
+    }
+    Ok(addresses)
+}
+
+fn quic_variant(addr: &Multiaddr) -> Option<Multiaddr> {
+    if addr
+        .iter()
+        .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::QuicV1))
+        || !addr
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::Tcp(_)))
+        || addr
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::P2pCircuit))
+    {
+        return None;
+    }
+    let raw = addr.to_string();
+    let (prefix, suffix) = raw.split_once("/tcp/")?;
+    let (port, tail) = suffix.split_once('/')?;
+    Some(format!("{prefix}/udp/{port}/quic-v1/{tail}").parse().ok()?)
+}
+
+fn normalize_relay_addr_list(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let mut addresses = parse_relay_addr_list(value, "relay 地址")?;
+    addresses.sort_by_key(|addr| {
+        if addr
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::QuicV1))
+        {
+            0
+        } else {
+            1
+        }
+    });
+    addresses.dedup();
+    if addresses.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(
+            addresses
+                .into_iter()
+                .map(|addr| addr.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        ))
+    }
+}
+
+fn load_global_relay_addr() -> Option<String> {
+    std::fs::read_to_string(config::relay_config_path())
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter().find_map(|protocol| match protocol {
+        libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),
+        _ => None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_config_prefers_quic_and_keeps_tcp_fallback() {
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let peer = PeerId::from(keypair.public());
+        let tcp = format!("/ip4/127.0.0.1/tcp/15720/p2p/{peer}");
+
+        let normalized = normalize_relay_addr_list(Some(&tcp))
+            .expect("valid relay address")
+            .expect("non-empty relay address");
+        let candidates = normalized.split(',').collect::<Vec<_>>();
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0].contains("/udp/15720/quic-v1/"));
+        assert!(candidates[1].contains("/tcp/15720/"));
+    }
+
+    #[test]
+    fn relay_config_accepts_multiple_addresses_and_deduplicates() {
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let peer = PeerId::from(keypair.public());
+        let quic = format!("/ip4/127.0.0.1/udp/15720/quic-v1/p2p/{peer}");
+        let tcp = format!("/ip4/127.0.0.1/tcp/15720/p2p/{peer}");
+        let input = format!("{tcp}\n{quic}\n{tcp}");
+
+        let normalized = normalize_relay_addr_list(Some(&input))
+            .expect("valid relay addresses")
+            .expect("non-empty relay addresses");
+        let candidates = normalized.split(',').collect::<Vec<_>>();
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0].contains("/udp/15720/quic-v1/"));
+        assert!(candidates[1].contains("/tcp/15720/"));
+    }
 }

@@ -45,6 +45,8 @@ export interface ShareStatus {
   pendingJoin?: PendingJoin;
   incomingRequests: JoinRequest[];
   bridgeRunning: boolean;
+  relayConnected: boolean;
+  relayTransport?: string;
   localPeerId: string;
 }
 

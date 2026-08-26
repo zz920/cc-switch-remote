@@ -6,6 +6,20 @@ use std::path::PathBuf;
 /// 消费侧本地桥接监听端口（仅 loopback）
 pub const SHARE_BRIDGE_PORT: u16 = 15723;
 
+/// Share P2P 监听端口（UDP/QUIC 与 TCP 共用端口号）。
+///
+/// 使用稳定端口便于 Windows 创建按程序和 Private 网络配置文件限定的
+/// 防火墙规则；如端口冲突，可通过 TOKENTAP_P2P_PORT 覆盖。
+pub const SHARE_P2P_PORT: u16 = 15722;
+
+pub fn share_p2p_port() -> u16 {
+    std::env::var("TOKENTAP_P2P_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(SHARE_P2P_PORT)
+}
+
 /// 数据面协议：每条 stream 承载一个 HTTP/1.1 请求/响应
 pub const DATA_PLANE_PROTOCOL: StreamProtocol = StreamProtocol::new("/tokentap/http/1.0.0");
 
@@ -46,6 +60,11 @@ pub fn share_data_dir() -> PathBuf {
     let dir = crate::config::get_app_config_dir().join("share");
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// 未加入网络时也可使用的 relay 候选配置。
+pub fn relay_config_path() -> PathBuf {
+    share_data_dir().join("relay-addresses.txt")
 }
 
 /// 鉴权头名称

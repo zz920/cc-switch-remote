@@ -1067,7 +1067,7 @@ function App() {
           );
         case "universal":
           return (
-            <div className="px-6 pt-4">
+            <div className="px-3 pt-4 sm:px-6">
               <UniversalProviderPanel />
             </div>
           );
@@ -1089,8 +1089,8 @@ function App() {
           return <AgentsDefaultsPanel />;
         default:
           return (
-            <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 sm:px-6">
+              <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeApp}
@@ -1179,7 +1179,7 @@ function App() {
 
   return (
     <div
-      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
+      className="flex h-screen min-w-0 flex-col overflow-hidden bg-background pb-4 text-foreground selection:bg-primary/30"
       style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
     >
       {(dragBarHeight > 0 || useAppWindowControls) && (

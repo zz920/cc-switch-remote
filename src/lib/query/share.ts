@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { shareApi } from "@/lib/api/share";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import type {
   ShareQuotaConfig,
   ShareRoutePreference,
@@ -18,6 +19,14 @@ const SHARE_STATUS_POLL_INTERVAL = 10_000;
  * 获取组网状态（10s 轮询）
  */
 export function useShareStatus(poll = true) {
+  const queryClient = useQueryClient();
+  useTauriEvent("share:join-request", () => {
+    void queryClient.invalidateQueries({ queryKey: shareKeys.status });
+  });
+  useTauriEvent("share:join-resolved", () => {
+    void queryClient.invalidateQueries({ queryKey: shareKeys.status });
+  });
+
   return useQuery({
     queryKey: shareKeys.status,
     queryFn: () => shareApi.getStatus(),

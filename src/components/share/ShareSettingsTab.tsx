@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +48,10 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { getAppLabel } from "@/config/appConfig";
 import type { AppId } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
+import {
+  ApprovalCard,
+  ShareNetworkSection,
+} from "@/components/share/ShareNetworkSection";
 import {
   useBlockPeer,
   useLeaveNetwork,
@@ -74,6 +80,7 @@ export function ShareSettingsTab() {
   const { t } = useTranslation();
   const { data: status, isLoading } = useShareStatus();
   const { data: keyStorage } = useShareKeyStorage();
+  const [activeShareTab, setActiveShareTab] = useState("overview");
 
   if (isLoading) {
     return (
@@ -83,8 +90,10 @@ export function ShareSettingsTab() {
     );
   }
 
+  const incomingCount = status?.incomingRequests.length ?? 0;
+
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {keyStorage === "file" && (
         <Alert variant="destructive">
           <ShieldAlert className="h-4 w-4" />
@@ -103,12 +112,86 @@ export function ShareSettingsTab() {
         </div>
       )}
 
-      <NodeNameSection status={status} />
-      <RelaySection status={status} />
-      <SharedProvidersSection status={status} />
-      <QuotaSection status={status} />
-      <PeerManagementSection status={status} />
-      <DangerZoneSection status={status} />
+      <Tabs
+        value={activeShareTab}
+        onValueChange={setActiveShareTab}
+        className="min-w-0 space-y-4"
+      >
+        <TabsList className="flex w-full max-w-full justify-start gap-1 overflow-x-auto rounded-lg p-1">
+          <TabsTrigger className="min-w-[110px] shrink-0" value="overview">
+            {t("share.settings.tabs.overview", { defaultValue: "概览" })}
+          </TabsTrigger>
+          <TabsTrigger className="min-w-[110px] shrink-0" value="sharing">
+            {t("share.settings.tabs.sharing", { defaultValue: "共享与配额" })}
+          </TabsTrigger>
+          <TabsTrigger className="min-w-[110px] shrink-0" value="nodes">
+            <span className="inline-flex items-center gap-1.5">
+              {t("share.settings.tabs.nodes", { defaultValue: "节点与审批" })}
+              {incomingCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="px-1.5 py-0 text-[10px]"
+                >
+                  {incomingCount}
+                </Badge>
+              )}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger className="min-w-[110px] shrink-0" value="relay">
+            {t("share.settings.tabs.relay", { defaultValue: "Relay 与连接" })}
+          </TabsTrigger>
+          <TabsTrigger className="min-w-[110px] shrink-0" value="advanced">
+            {t("share.settings.tabs.advanced", { defaultValue: "高级" })}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="min-w-0 space-y-4">
+          <ShareNetworkSection
+            showApprovals={false}
+            onOpenSettings={() => setActiveShareTab("nodes")}
+          />
+          <NodeNameSection status={status} />
+        </TabsContent>
+
+        <TabsContent value="sharing" className="min-w-0 space-y-4">
+          <SharedProvidersSection status={status} />
+          <QuotaSection status={status} />
+        </TabsContent>
+
+        <TabsContent value="nodes" className="min-w-0 space-y-4">
+          {status?.role === "creator" && incomingCount > 0 && (
+            <SectionCard
+              title={t("share.approval.title")}
+              description={t("share.approval.verifyHint")}
+            >
+              <div className="space-y-3">
+                {status.incomingRequests.map((request) => (
+                  <ApprovalCard
+                    key={`${request.peerId}:${request.shortCode}`}
+                    request={request}
+                  />
+                ))}
+              </div>
+            </SectionCard>
+          )}
+          {status?.role && status.role !== "creator" && (
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              {t("share.approval.creatorOnly", {
+                defaultValue: "只有网络创建者可以审批加入申请。",
+              })}
+            </div>
+          )}
+          <PeerManagementSection status={status} />
+        </TabsContent>
+
+        <TabsContent value="relay" className="min-w-0 space-y-4">
+          <RelaySection status={status} />
+        </TabsContent>
+
+        <TabsContent value="advanced" className="min-w-0 space-y-4">
+          <DangerZoneSection status={status} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -203,13 +286,31 @@ function RelaySection({ status }: { status?: ShareStatus }) {
       title={t("share.settings.relay.title")}
       description={t("share.settings.relay.description")}
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Input
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs">
+        <span className="text-muted-foreground">
+          {t("share.settings.relay.status", { defaultValue: "连接状态" })}:
+        </span>
+        <Badge variant={status?.relayConnected ? "default" : "secondary"}>
+          {status?.relayConnected
+            ? t("share.settings.relay.connected", { defaultValue: "已连接" })
+            : t("share.settings.relay.disconnected", {
+                defaultValue: "未连接",
+              })}
+        </Badge>
+        {status?.relayConnected && status.relayTransport && (
+          <span className="font-mono uppercase text-muted-foreground">
+            {status.relayTransport}
+          </span>
+        )}
+      </div>
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start">
+        <Textarea
           value={addr}
           onChange={(event) => setAddr(event.target.value)}
           placeholder={t("share.settings.relay.placeholder")}
           disabled={!status}
-          className="flex-1"
+          rows={3}
+          className="min-w-0 flex-1 font-mono text-xs"
         />
         <div className="flex gap-2">
           <Button
@@ -573,87 +674,100 @@ function PeerManagementSection({ status }: { status?: ShareStatus }) {
           {t("share.peers.empty")}
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t("share.peers.name")}</TableHead>
-              <TableHead>{t("share.approval.peerId")}</TableHead>
-              <TableHead>{t("share.peers.statusColumn")}</TableHead>
-              <TableHead>{t("share.peers.connectionColumn")}</TableHead>
-              <TableHead>{t("share.peers.used")}</TableHead>
-              <TableHead className="text-right">
-                {t("common.actions")}
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {peers.map((peer) => (
-              <TableRow key={peer.peerId}>
-                <TableCell className="font-medium">
-                  <span className="mr-2">{peer.name}</span>
-                  {peer.isBlocked && (
-                    <Badge variant="destructive" className="text-xs">
-                      {t("share.peers.blocked")}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {peer.peerId.slice(0, 8)}
-                </TableCell>
-                <TableCell>
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-xs ${
-                      peer.online
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        peer.online
-                          ? "bg-emerald-500"
-                          : "bg-muted-foreground/40"
-                      }`}
-                    />
-                    {peer.online
-                      ? t("share.peers.online")
-                      : t("share.peers.offline")}
-                  </span>
-                </TableCell>
-                <TableCell className="text-xs">
-                  {peer.direct
-                    ? t("share.peers.direct")
-                    : t("share.peers.relay")}
-                </TableCell>
-                <TableCell className="text-xs">
-                  {peer.tokensUsed.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {peer.isBlocked ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => void handleUnblock(peer.peerId)}
-                    >
-                      {t("share.peers.unblock")}
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={busy}
-                      onClick={() => setBlockTarget(peer)}
-                    >
-                      <Ban className="mr-1.5 h-3.5 w-3.5" />
-                      {t("share.peers.block")}
-                    </Button>
-                  )}
-                </TableCell>
+        <div className="min-w-0 overflow-x-auto">
+          <Table className="min-w-[680px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("share.peers.name")}</TableHead>
+                <TableHead>{t("share.approval.peerId")}</TableHead>
+                <TableHead>{t("share.peers.statusColumn")}</TableHead>
+                <TableHead>{t("share.peers.connectionColumn")}</TableHead>
+                <TableHead>{t("share.peers.used")}</TableHead>
+                <TableHead className="text-right">
+                  {t("common.actions")}
+                </TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {peers.map((peer) => (
+                <TableRow key={peer.peerId}>
+                  <TableCell className="max-w-[180px] font-medium">
+                    <span
+                      className="mr-2 inline-block max-w-full truncate align-middle"
+                      title={peer.name || undefined}
+                    >
+                      {peer.name ||
+                        t("share.peers.unnamed", {
+                          defaultValue: "未命名节点",
+                        })}
+                    </span>
+                    {peer.isBlocked && (
+                      <Badge variant="destructive" className="text-xs">
+                        {t("share.peers.blocked")}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell
+                    className="max-w-[220px] truncate font-mono text-xs"
+                    title={peer.peerId}
+                  >
+                    {peer.peerId}
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-xs ${
+                        peer.online
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          peer.online
+                            ? "bg-emerald-500"
+                            : "bg-muted-foreground/40"
+                        }`}
+                      />
+                      {peer.online
+                        ? t("share.peers.online")
+                        : t("share.peers.offline")}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {peer.direct
+                      ? t("share.peers.direct")
+                      : t("share.peers.relay")}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {peer.tokensUsed.toLocaleString()}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {peer.isBlocked ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void handleUnblock(peer.peerId)}
+                      >
+                        {t("share.peers.unblock")}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={busy}
+                        onClick={() => setBlockTarget(peer)}
+                      >
+                        <Ban className="mr-1.5 h-3.5 w-3.5" />
+                        {t("share.peers.block")}
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
 
       <ConfirmDialog

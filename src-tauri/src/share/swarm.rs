@@ -15,7 +15,9 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 
 use super::config;
 
@@ -95,6 +97,7 @@ pub enum SwarmEventOut {
     /// relay 连接/预约状态变化（展示用）
     RelayState {
         connected: bool,
+        transport: Option<String>,
     },
 }
 
@@ -210,11 +213,22 @@ pub fn start_swarm(
         }
     };
 
-    // 监听本地地址（真实传输：随机端口；附加地址：测试/自定义）
+    // 监听本地地址（真实传输：稳定端口，便于 Windows 防火墙规则持久化）
     match kind {
         TransportKind::Real => {
-            let _ = swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().expect("quic addr"));
-            let _ = swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse().expect("tcp addr"));
+            let port = config::share_p2p_port();
+            let quic_addr = format!("/ip4/0.0.0.0/udp/{port}/quic-v1")
+                .parse()
+                .expect("quic addr");
+            let tcp_addr = format!("/ip4/0.0.0.0/tcp/{port}")
+                .parse()
+                .expect("tcp addr");
+            if let Err(error) = swarm.listen_on(quic_addr) {
+                log::warn!("[Share] QUIC P2P 监听失败（端口 {port}），将依赖 relay: {error}");
+            }
+            if let Err(error) = swarm.listen_on(tcp_addr) {
+                log::warn!("[Share] TCP P2P 监听失败（端口 {port}），将依赖 QUIC/relay: {error}");
+            }
         }
         TransportKind::Memory => {}
     }
@@ -327,12 +341,19 @@ struct LoopState {
     namespace: Option<String>,
     relay_peer: Option<PeerId>,
     relay_addr: Option<Multiaddr>,
+    relay_candidates: Vec<Multiaddr>,
+    relay_candidate_index: usize,
+    relay_retry_at: Instant,
+    relay_listener_ids: HashSet<libp2p::core::transport::ListenerId>,
     /// 已建立连接的 peer（可能多条连接：中继 + 直连）
     connections: HashMap<PeerId, HashSet<libp2p::swarm::ConnectionId>>,
     /// 直连中的 peer（存在非中继连接）
     direct: HashSet<PeerId>,
     /// 已尝试拨号的 peer（避免重复轰炸）
     dialed: HashSet<PeerId>,
+    /// 每个 peer 的有序地址候选和下一次尝试位置
+    peer_candidates: HashMap<PeerId, Vec<Multiaddr>>,
+    peer_candidate_index: HashMap<PeerId, usize>,
     /// rendezvous 发现 cookie（增量发现）
     discover_cookie: Option<rendezvous::Cookie>,
     /// 是否已完成 relay 预约
@@ -354,9 +375,15 @@ async fn swarm_loop(
         namespace: None,
         relay_peer: None,
         relay_addr: None,
+        relay_candidates: Vec::new(),
+        relay_candidate_index: 0,
+        relay_retry_at: Instant::now(),
+        relay_listener_ids: HashSet::new(),
         connections: HashMap::new(),
         direct: HashSet::new(),
         dialed: HashSet::new(),
+        peer_candidates: HashMap::new(),
+        peer_candidate_index: HashMap::new(),
         discover_cookie: None,
         relay_reserved: false,
     };
@@ -367,6 +394,7 @@ async fn swarm_loop(
     let mut discover_tick = tokio::time::interval(std::time::Duration::from_secs(
         config::RENDEZVOUS_DISCOVER_SECS,
     ));
+    let mut relay_retry_tick = tokio::time::interval(Duration::from_secs(1));
     // 立即触发一次发现（不等满一个周期）
     discover_tick.reset();
 
@@ -378,25 +406,23 @@ async fn swarm_loop(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SwarmCmd::Configure { namespace, relay_addrs }) => {
+                        remove_relay_listeners(&mut swarm, &mut state);
                         state.namespace = namespace;
+                        state.relay_candidates = relay_addrs;
+                        state.relay_candidates.sort_by_key(|addr| {
+                            if is_quic_addr(addr) { 0 } else { 1 }
+                        });
+                        state.relay_candidate_index = 0;
+                        state.relay_peer = None;
+                        state.relay_addr = None;
                         state.relay_reserved = false;
-                        // 拨号第一个可用 relay
-                        for addr in relay_addrs {
-                            if let Some(relay_peer) = addr.iter().find_map(|p| match p {
-                                Protocol::P2p(peer) => Some(peer),
-                                _ => None,
-                            }) {
-                                state.relay_peer = Some(relay_peer);
-                                state.relay_addr = Some(addr.clone());
-                                if let Err(e) = swarm.dial(addr.clone()) {
-                                    log::warn!("[Share] 拨号 relay 失败: {e}");
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
+                        state.relay_retry_at = Instant::now();
+                        // 只把 dial Ok 视为已入队；实际连接成功/失败由异步事件推进候选。
+                        let _ = dial_next_relay(&mut swarm, &mut state);
                         // 尝试注册（外部地址未就绪时会在 NewExternalAddr 后重试）
                         try_register(&mut swarm, &mut state);
+                        // 配置完成后立即发现，不等待完整的 30 秒周期。
+                        try_discover(&mut swarm, &mut state);
                     }
                     Some(SwarmCmd::SendJoinRequest { peer, request, respond }) => {
                         let mut control = stream_control.clone();
@@ -411,12 +437,20 @@ async fn swarm_loop(
                         }
                     }
                     Some(SwarmCmd::Leave) => {
+                        remove_relay_listeners(&mut swarm, &mut state);
                         if let (Some(ns), Some(relay_peer)) = (state.namespace.take(), state.relay_peer) {
                             if let Ok(namespace) = rendezvous::Namespace::new(ns) {
                                 swarm.behaviour_mut().rendezvous.unregister(namespace, relay_peer);
                             }
                         }
                         state.dialed.clear();
+                        state.peer_candidates.clear();
+                        state.peer_candidate_index.clear();
+                        state.relay_peer = None;
+                        state.relay_addr = None;
+                        state.relay_candidates.clear();
+                        state.relay_candidate_index = 0;
+                        state.relay_reserved = false;
                         state.discover_cookie = None;
                     }
                     Some(SwarmCmd::Shutdown) | None => {
@@ -475,8 +509,137 @@ async fn swarm_loop(
             _ = discover_tick.tick() => {
                 try_discover(&mut swarm, &mut state);
             }
+            _ = relay_retry_tick.tick() => {
+                if state.relay_peer.is_none() && Instant::now() >= state.relay_retry_at {
+                    state.relay_candidate_index = 0;
+                    let _ = dial_next_relay(&mut swarm, &mut state);
+                }
+            }
         }
     }
+}
+
+fn relay_peer_id(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter().find_map(|protocol| match protocol {
+        Protocol::P2p(peer_id) => Some(peer_id),
+        _ => None,
+    })
+}
+
+fn remove_relay_listeners(swarm: &mut Swarm<ShareBehaviour>, state: &mut LoopState) {
+    for listener_id in state.relay_listener_ids.drain() {
+        swarm.remove_listener(listener_id);
+    }
+}
+
+fn dial_next_relay(swarm: &mut Swarm<ShareBehaviour>, state: &mut LoopState) -> bool {
+    while state.relay_candidate_index < state.relay_candidates.len() {
+        let index = state.relay_candidate_index;
+        state.relay_candidate_index += 1;
+        let addr = state.relay_candidates[index].clone();
+        let Some(peer) = relay_peer_id(&addr) else {
+            log::warn!("[Share] relay 地址缺少 PeerId，跳过: {addr}");
+            continue;
+        };
+        state.relay_peer = Some(peer);
+        state.relay_addr = Some(addr.clone());
+        match swarm.dial(addr.clone()) {
+            Ok(()) => {
+                log::info!("[Share] relay 拨号已入队（候选 {}）: {addr}", index + 1);
+                return true;
+            }
+            Err(error) => {
+                log::warn!("[Share] relay 拨号同步失败，尝试下一候选: {error}");
+                state.relay_peer = None;
+                state.relay_addr = None;
+            }
+        }
+    }
+    state.relay_peer = None;
+    state.relay_addr = None;
+    state.relay_retry_at = Instant::now() + Duration::from_secs(5);
+    false
+}
+
+fn is_relay_addr(addr: &Multiaddr) -> bool {
+    addr.iter()
+        .any(|protocol| matches!(protocol, Protocol::P2pCircuit))
+}
+
+fn is_quic_addr(addr: &Multiaddr) -> bool {
+    addr.iter()
+        .any(|protocol| matches!(protocol, Protocol::QuicV1))
+}
+
+fn ensure_peer_id(addr: Multiaddr, peer: PeerId) -> Multiaddr {
+    if addr
+        .iter()
+        .any(|protocol| matches!(protocol, Protocol::P2p(_)))
+    {
+        addr
+    } else {
+        addr.with(Protocol::P2p(peer))
+    }
+}
+
+fn peer_candidates(
+    registration: &rendezvous::Registration,
+    relay_addr: Option<&Multiaddr>,
+    peer: PeerId,
+) -> Vec<Multiaddr> {
+    let mut candidates = registration
+        .record
+        .addresses()
+        .iter()
+        .cloned()
+        .map(|addr| ensure_peer_id(addr, peer))
+        .collect::<Vec<_>>();
+    if let Some(relay) = relay_addr {
+        let circuit = relay
+            .clone()
+            .with(Protocol::P2pCircuit)
+            .with(Protocol::P2p(peer));
+        candidates.push(circuit);
+    }
+    candidates.sort_by_key(|addr| {
+        if is_relay_addr(addr) {
+            if is_quic_addr(addr) {
+                2
+            } else {
+                3
+            }
+        } else if is_quic_addr(addr) {
+            0
+        } else {
+            1
+        }
+    });
+    candidates.dedup_by(|left, right| left == right);
+    candidates
+}
+
+fn dial_next_peer(swarm: &mut Swarm<ShareBehaviour>, state: &mut LoopState, peer: PeerId) -> bool {
+    let Some(candidates) = state.peer_candidates.get(&peer).cloned() else {
+        return false;
+    };
+    let index = state.peer_candidate_index.entry(peer).or_insert(0);
+    while *index < candidates.len() {
+        let addr = candidates[*index].clone();
+        *index += 1;
+        match swarm.dial(addr.clone()) {
+            Ok(()) => {
+                state.dialed.insert(peer);
+                log::info!("[Share] 节点 {peer} 拨号已入队: {addr}");
+                return true;
+            }
+            Err(error) => {
+                log::debug!("[Share] 节点 {peer} 候选失败，尝试下一地址: {error}");
+            }
+        }
+    }
+    state.dialed.remove(&peer);
+    state.peer_candidate_index.remove(&peer);
+    false
 }
 
 fn try_register(swarm: &mut Swarm<ShareBehaviour>, state: &mut LoopState) {
@@ -559,31 +722,47 @@ async fn handle_swarm_event(
                 state.direct.insert(peer_id);
             }
             let is_direct = state.direct.contains(&peer_id);
-            log::info!(
-                "[Share] 节点已连接: {peer_id}（{}）",
-                if is_direct { "直连" } else { "中继" }
-            );
-            let _ = event_tx
-                .send(SwarmEventOut::PeerConnected {
-                    peer_id,
-                    direct: is_direct,
-                })
-                .await;
-
-            // 连接上 relay 后发起预约并监听电路地址
-            if Some(peer_id) == state.relay_peer && !state.relay_reserved {
-                if let Some(relay_addr) = state.relay_addr.clone() {
-                    let circuit = relay_addr.with(Protocol::P2pCircuit);
-                    match swarm.listen_on(circuit) {
-                        Ok(_) => {
-                            state.relay_reserved = true;
-                            let _ = event_tx
-                                .send(SwarmEventOut::RelayState { connected: true })
-                                .await;
+            if Some(peer_id) == state.relay_peer {
+                if !state.relay_reserved {
+                    let transport = state
+                        .relay_addr
+                        .as_ref()
+                        .map(|addr| if is_quic_addr(addr) { "QUIC" } else { "TCP" })
+                        .unwrap_or("unknown");
+                    log::info!("[Share] relay 控制连接已建立（{transport}）: {peer_id}");
+                    if let Some(relay_addr) = state.relay_addr.clone() {
+                        let circuit = relay_addr.with(Protocol::P2pCircuit);
+                        match swarm.listen_on(circuit) {
+                            Ok(listener_id) => {
+                                state.relay_listener_ids.insert(listener_id);
+                                state.relay_reserved = true;
+                                let _ = event_tx
+                                    .send(SwarmEventOut::RelayState {
+                                        connected: true,
+                                        transport: Some(transport.to_ascii_lowercase()),
+                                    })
+                                    .await;
+                            }
+                            Err(e) => {
+                                log::warn!("[Share] relay 预约失败，尝试下一候选: {e}");
+                                state.relay_peer = None;
+                                state.relay_addr = None;
+                                let _ = dial_next_relay(swarm, state);
+                            }
                         }
-                        Err(e) => log::warn!("[Share] relay 预约失败: {e}"),
                     }
                 }
+            } else {
+                log::info!(
+                    "[Share] 节点已连接: {peer_id}（{}）",
+                    if is_direct { "直连" } else { "中继" }
+                );
+                let _ = event_tx
+                    .send(SwarmEventOut::PeerConnected {
+                        peer_id,
+                        direct: is_direct,
+                    })
+                    .await;
             }
         }
         SwarmEvent::ConnectionClosed {
@@ -599,13 +778,21 @@ async fn handle_swarm_event(
                     state.dialed.remove(&peer_id);
                     if Some(peer_id) == state.relay_peer {
                         state.relay_reserved = false;
+                        state.relay_peer = None;
+                        state.relay_addr = None;
+                        state.relay_retry_at = Instant::now() + Duration::from_secs(1);
                         let _ = event_tx
-                            .send(SwarmEventOut::RelayState { connected: false })
+                            .send(SwarmEventOut::RelayState {
+                                connected: false,
+                                transport: None,
+                            })
+                            .await;
+                    } else {
+                        state.peer_candidate_index.remove(&peer_id);
+                        let _ = event_tx
+                            .send(SwarmEventOut::PeerDisconnected { peer_id })
                             .await;
                     }
-                    let _ = event_tx
-                        .send(SwarmEventOut::PeerDisconnected { peer_id })
-                        .await;
                 }
             }
         }
@@ -614,6 +801,11 @@ async fn handle_swarm_event(
             info,
             ..
         })) => {
+            if Some(peer_id) == state.relay_peer {
+                // relay 的 identify 只用于地址/连接诊断，不是共享网络成员。
+                swarm.add_external_address(info.observed_addr);
+                return;
+            }
             // 对方观察到的我们的地址 → 作为外部地址（打洞/注册用）
             swarm.add_external_address(info.observed_addr);
             if let Some(name) = parse_agent_name(&info.agent_version) {
@@ -638,25 +830,14 @@ async fn handle_swarm_event(
                 if !state.dialed.insert(peer) {
                     continue;
                 }
-                // 优先使用注册记录中的中继电路地址
-                let circuit_addr = registration
-                    .record
-                    .addresses()
-                    .iter()
-                    .find(|a| a.iter().any(|p| matches!(p, Protocol::P2pCircuit)))
-                    .cloned()
-                    .or_else(|| {
-                        state
-                            .relay_addr
-                            .clone()
-                            .map(|r| r.with(Protocol::P2pCircuit).with(Protocol::P2p(peer)))
-                    });
-                if let Some(addr) = circuit_addr {
-                    log::info!("[Share] 发现节点 {peer}，拨号: {addr}");
-                    if let Err(e) = swarm.dial(addr) {
-                        log::debug!("[Share] 拨号 {peer} 失败: {e}");
-                    }
+                let candidates = peer_candidates(&registration, state.relay_addr.as_ref(), peer);
+                if candidates.is_empty() {
+                    state.dialed.remove(&peer);
+                    continue;
                 }
+                state.peer_candidates.insert(peer, candidates);
+                state.peer_candidate_index.insert(peer, 0);
+                let _ = dial_next_peer(swarm, state, peer);
             }
         }
         SwarmEvent::Behaviour(ShareBehaviourEvent::Rendezvous(
@@ -674,6 +855,18 @@ async fn handle_swarm_event(
         },
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
             log::debug!("[Share] 外拨失败 {peer_id:?}: {error}");
+            let Some(peer) = peer_id else {
+                return;
+            };
+            if Some(peer) == state.relay_peer {
+                state.relay_peer = None;
+                state.relay_addr = None;
+                state.relay_reserved = false;
+                let _ = dial_next_relay(swarm, state);
+            } else if state.peer_candidates.contains_key(&peer) {
+                state.dialed.remove(&peer);
+                let _ = dial_next_peer(swarm, state, peer);
+            }
         }
         _ => {}
     }
@@ -683,7 +876,7 @@ async fn handle_swarm_event(
 mod tests {
     use super::*;
 
-    /// 双内存 swarm 全链路（M1.6.3 进程内形态）：
+    /// 双内存 swarm 全链路：
     /// 连接建立 → 数据面 stream echo → 加入申请/审批 wire 往返
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn memory_swarm_full_roundtrip() {
@@ -790,7 +983,7 @@ mod tests {
         assert_eq!(&buf, b"ping");
         drop(stream);
 
-        // 加入申请 → 自动批准（完整 wire 往返 + key 下发）
+        // 加入申请 → 审批（完整 wire 往返 + key 下发）
         let (resp_tx, resp_rx) = oneshot::channel();
         handle_a
             .cmd
