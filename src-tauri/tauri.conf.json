@@ -56,8 +56,16 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["tokentap"]
+        "schemes": [
+          "tokentap"
+        ]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBMTI3RTEwRjgyQzE1MjUKUldRbEZTejRFSDRTT25kSlRZbXRGSEQ5a0ROR3NsODF1a1pESjVYbUZSZHV6U2FUWm9KaXAxcDAK",
+      "endpoints": [
+        "https://updates.tokentap.example.com/latest.json"
+      ]
     }
   }
 }
