@@ -17,8 +17,8 @@
         "titleBarStyle": "Overlay",
         "width": 1000,
         "height": 650,
-        "minWidth": 900,
-        "minHeight": 600,
+        "minWidth": 720,
+        "minHeight": 520,
         "visible": false,
         "resizable": true,
         "fullscreen": false,
@@ -56,9 +56,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "tokentap"
-        ]
+        "schemes": ["tokentap"]
       }
     }
   }

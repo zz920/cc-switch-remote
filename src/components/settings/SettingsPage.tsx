@@ -53,7 +53,6 @@ import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { ShareSettingsTab } from "@/components/share/ShareSettingsTab";
-import { SWITCH_SETTINGS_TAB_EVENT } from "@/components/share/ShareNetworkSection";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -125,18 +124,6 @@ export function SettingsPage({
       setShowRestartPrompt(true);
     }
   }, [requiresRestart]);
-
-  // 允许深层组件（如代理面板里的共享网络区）请求切换设置 tab
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const tab = (event as CustomEvent<string>).detail;
-      if (typeof tab === "string" && tab) {
-        setActiveTab(tab);
-      }
-    };
-    window.addEventListener(SWITCH_SETTINGS_TAB_EVENT, handler);
-    return () => window.removeEventListener(SWITCH_SETTINGS_TAB_EVENT, handler);
-  }, []);
 
   useLayoutEffect(() => {
     if (tabScrollContainerRef.current) {
@@ -227,7 +214,7 @@ export function SettingsPage({
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-6">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden px-3 sm:px-6">
       {isBusy ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -236,30 +223,54 @@ export function SettingsPage({
         <Tabs
           value={activeTab}
           onValueChange={setActiveTab}
-          className="flex flex-col h-full"
+          className="flex h-full min-w-0 flex-col"
         >
-          <TabsList className="grid w-full grid-cols-7 mb-6 glass rounded-lg">
-            <TabsTrigger value="general">
+          <TabsList className="mb-6 flex w-full max-w-full justify-start overflow-x-auto rounded-lg glass">
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="general"
+            >
               {t("settings.tabGeneral")}
             </TabsTrigger>
-            <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
-            <TabsTrigger value="share">
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="proxy"
+            >
+              {t("settings.tabProxy")}
+            </TabsTrigger>
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="share"
+            >
               {t("settings.tabShare", { defaultValue: "共享网络" })}
             </TabsTrigger>
-            <TabsTrigger value="auth">
+            <TabsTrigger className="min-w-0 shrink-0 px-2 sm:px-3" value="auth">
               {t("settings.tabAuth", { defaultValue: "认证" })}
             </TabsTrigger>
-            <TabsTrigger value="advanced">
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="advanced"
+            >
               {t("settings.tabAdvanced")}
             </TabsTrigger>
-            <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
-            <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="usage"
+            >
+              {t("usage.title")}
+            </TabsTrigger>
+            <TabsTrigger
+              className="min-w-0 shrink-0 px-2 sm:px-3"
+              value="about"
+            >
+              {t("common.about")}
+            </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div
               ref={tabScrollContainerRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
+              className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-1 sm:pr-2"
             >
               <TabsContent value="general" className="space-y-6 mt-0">
                 {settings ? (

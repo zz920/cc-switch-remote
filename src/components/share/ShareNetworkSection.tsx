@@ -51,18 +51,6 @@ import type {
   ShareStatus,
 } from "@/types/share";
 
-/** 设置页共享网络 tab 的 value */
-export const SHARE_SETTINGS_TAB = "share";
-
-/** 请求设置页切换 tab 的自定义事件（ShareNetworkSection 嵌在设置页内，避免层层透传回调） */
-export const SWITCH_SETTINGS_TAB_EVENT = "cc-switch:switch-settings-tab";
-
-export function requestSwitchSettingsTab(tab: string) {
-  window.dispatchEvent(
-    new CustomEvent<string>(SWITCH_SETTINGS_TAB_EVENT, { detail: tab }),
-  );
-}
-
 /** 从用户输入中提取 share id（支持粘贴完整 tokentap://join?id= 链接） */
 export function extractShareId(input: string): string {
   const trimmed = input.trim();
@@ -84,7 +72,15 @@ function formatCountdown(remainingSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function ShareNetworkSection() {
+interface ShareNetworkSectionProps {
+  showApprovals?: boolean;
+  onOpenSettings: () => void;
+}
+
+export function ShareNetworkSection({
+  showApprovals = true,
+  onOpenSettings,
+}: ShareNetworkSectionProps) {
   const { t } = useTranslation();
   const { data: status, isLoading } = useShareStatus();
   const [open, setOpen] = useState(true);
@@ -195,14 +191,12 @@ export function ShareNetworkSection() {
               <JoinedView
                 status={status}
                 onlineCount={onlineCount}
-                onOpenSettings={() =>
-                  requestSwitchSettingsTab(SHARE_SETTINGS_TAB)
-                }
+                onOpenSettings={onOpenSettings}
                 onLeave={() => setLeaveConfirmOpen(true)}
               />
             )}
 
-            {incomingCount > 0 && (
+            {showApprovals && incomingCount > 0 && (
               <div className="space-y-2">
                 {status?.incomingRequests.map((request) => (
                   <ApprovalCard key={request.peerId} request={request} />
@@ -310,7 +304,15 @@ function JoinedView({
                       peer.online ? "bg-emerald-500" : "bg-muted-foreground/40"
                     }`}
                   />
-                  <span className="truncate font-medium">{peer.name}</span>
+                  <span
+                    className="truncate font-medium"
+                    title={peer.name || undefined}
+                  >
+                    {peer.name ||
+                      t("share.peers.unnamed", {
+                        defaultValue: "未命名节点",
+                      })}
+                  </span>
                   <span className="flex-shrink-0 text-xs text-muted-foreground">
                     {peer.online
                       ? peer.direct
@@ -450,7 +452,7 @@ function PendingJoinView({ shortCode, expiresAt }: PendingJoinViewProps) {
 
 // ========== 审批卡片 ==========
 
-function ApprovalCard({ request }: { request: JoinRequest }) {
+export function ApprovalCard({ request }: { request: JoinRequest }) {
   const { t } = useTranslation();
   const approveJoin = useApproveJoin();
   const rejectJoin = useRejectJoin();
@@ -487,10 +489,23 @@ function ApprovalCard({ request }: { request: JoinRequest }) {
       </div>
       <div className="grid gap-1 text-sm">
         <p className="font-medium">{request.nodeName}</p>
-        <p className="text-xs text-muted-foreground">
-          {t("share.approval.peerId")}:{" "}
-          <span className="font-mono">{request.peerId.slice(0, 8)}</span>
-        </p>
+        <div className="flex min-w-0 items-start gap-2 text-xs text-muted-foreground">
+          <span className="shrink-0">{t("share.approval.peerId")}:</span>
+          <span className="min-w-0 break-all font-mono" title={request.peerId}>
+            {request.peerId}
+          </span>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6 shrink-0"
+            title={t("share.approval.copyPeerId", {
+              defaultValue: "复制 PeerId",
+            })}
+            onClick={() => void copyText(request.peerId)}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+        </div>
         <p className="text-xs text-muted-foreground">
           {t("share.approval.shortCode")}:{" "}
           <span className="font-mono text-base font-semibold tracking-[0.2em] text-foreground">
@@ -499,6 +514,10 @@ function ApprovalCard({ request }: { request: JoinRequest }) {
         </p>
         <p className="text-xs text-amber-600 dark:text-amber-400">
           {t("share.approval.verifyHint")}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {t("share.approval.receivedAt", { defaultValue: "收到时间" })}:{" "}
+          {new Date(request.receivedAt * 1000).toLocaleString()}
         </p>
       </div>
       <div className="flex gap-2">

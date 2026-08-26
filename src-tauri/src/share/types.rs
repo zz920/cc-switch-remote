@@ -129,6 +129,11 @@ pub struct ShareNetworkStatus {
     pub incoming_requests: Vec<JoinRequestInfo>,
     /// 消费侧本地桥接是否在运行
     pub bridge_running: bool,
+    /// relay 控制连接是否已建立并完成预约
+    pub relay_connected: bool,
+    /// 当前 relay bootstrap transport（quic/tcp）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_transport: Option<String>,
     /// 本机 PeerId
     pub local_peer_id: String,
 }
