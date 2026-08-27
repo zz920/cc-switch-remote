@@ -125,6 +125,15 @@ pub async fn share_set_route_preference(
     state.share_manager.set_route_preference(preference).await
 }
 
+/// 设置本节点共享网络角色（provider / consumer）。
+#[tauri::command]
+pub async fn share_set_route_mode(
+    state: tauri::State<'_, AppState>,
+    mode: String,
+) -> Result<(), String> {
+    state.share_manager.set_route_mode(mode).await
+}
+
 /// 设置某个应用实际参与共享路由的远端 Provider target。
 #[tauri::command]
 pub async fn share_set_route_targets(

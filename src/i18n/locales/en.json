@@ -3274,10 +3274,13 @@
       "joinRequired": "Usage tracking starts after joining a share network."
     },
     "networkProvider": {
-      "title": "Share Network Provider",
-      "description": "Choose remote Providers offered by online peers for {{app}}; local Providers remain unchanged.",
+      "title": "Share Network",
+      "description": "User mode can switch between local Providers and {{app}} Providers offered by network peers.",
       "active": "In use",
       "waiting": "Available to configure",
+      "total": "Total: 0",
+      "used": "Used: 0",
+      "dragHint": "Drag to adjust shared Provider order",
       "noneAvailable": "No online peer currently provides a usable Provider for {{app}}.",
       "providerCount": "{{count}} Provider(s)",
       "selected": "Selected",
@@ -3289,6 +3292,7 @@
       "usage": "View usage",
       "refresh": "Refresh shared Providers",
       "saved": "Shared Provider routing updated",
+      "localHidden": "User mode is active; local Providers are not used for routing.",
       "proxyRequired": "Shared Providers are selected, but {{app}} must enable local routing takeover before requests can use the share network.",
       "openRouting": "Configure Routing"
     },
@@ -3363,12 +3367,10 @@
       "unnamed": "Unnamed peer"
     },
     "routePreference": {
-      "title": "Share network routing mode",
-      "description": "Control whether shared Providers join the local proxy route. This applies globally to Claude, Codex, Gemini, and GrokBuild.",
-      "local_only": "Disable share network",
-      "local_first": "Local first, share network as fallback",
-      "network_first": "Share network first, local as fallback",
-      "network_only": "Share network only"
+      "title": "Share network role",
+      "description": "A node has one role at a time. User mode can switch between local and shared Providers; Provider mode exposes only local Providers.",
+      "provider": "Provider",
+      "consumer": "User"
     },
     "quota": {
       "title": "Usage Quota",

@@ -43,6 +43,7 @@ use swarm::{JoinRequestWire, JoinResponseWire, SwarmCmd, SwarmEventOut, SwarmHan
 use types::*;
 
 const ROUTE_TARGETS_SETTING: &str = "share_route_targets";
+const SHARE_MODE_SETTING: &str = "share_mode";
 
 /// 组网管理器（全局单例，存于 AppState）
 #[derive(Clone)]
@@ -188,8 +189,13 @@ impl ShareManager {
 
     /// 把 DB 行同步到内存（白名单/限额/偏好/节点名）
     async fn apply_network_row(&self, row: ShareNetworkRow) {
+        let mode = self.share_mode_for_row(&row).await;
         {
-            let whitelist = row.shared_provider_ids.iter().cloned().collect();
+            let whitelist = if mode == ShareMode::Provider {
+                row.shared_provider_ids.iter().cloned().collect()
+            } else {
+                HashSet::new()
+            };
             *self
                 .inner
                 .whitelist
@@ -208,7 +214,11 @@ impl ShareManager {
                 .route_table
                 .write()
                 .unwrap_or_else(|e| e.into_inner());
-            table.preference = RoutePreference::from_str_lossy(&row.route_preference);
+            table.preference = if mode == ShareMode::Provider {
+                RoutePreference::LocalOnly
+            } else {
+                self.route_preference_for_row(&row)
+            };
         }
         *self.inner.network.write().await = Some(row);
     }
@@ -414,6 +424,10 @@ impl ShareManager {
             .db
             .save_share_network(&row)
             .map_err(|e| e.to_string())?;
+        self.inner
+            .db
+            .set_setting(SHARE_MODE_SETTING, ShareMode::Provider.as_str())
+            .map_err(|e| e.to_string())?;
         self.apply_network_row(row).await;
         *self.inner.share_key.write().await = Some(share_key.clone());
         self.start_full_runtime().await?;
@@ -591,6 +605,10 @@ impl ShareManager {
                 .db
                 .save_share_network(&row)
                 .map_err(|e| e.to_string())?;
+            self.inner
+                .db
+                .set_setting(SHARE_MODE_SETTING, ShareMode::Provider.as_str())
+                .map_err(|e| e.to_string())?;
             *self.inner.pending_join.write().await = None;
             self.apply_network_row(row).await;
             *self.inner.share_key.write().await = Some(share_key);
@@ -695,6 +713,10 @@ impl ShareManager {
             .db
             .delete_share_network()
             .map_err(|e| e.to_string())?;
+        self.inner
+            .db
+            .set_setting(SHARE_MODE_SETTING, ShareMode::Provider.as_str())
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -702,6 +724,9 @@ impl ShareManager {
 
     /// 设置出借白名单（"app:provider_id" 列表）
     pub async fn set_shared_providers(&self, ids: Vec<String>) -> Result<(), String> {
+        if self.current_share_mode().await == ShareMode::Consumer {
+            return Err("当前节点是用户模式，不能配置共享 Provider".to_string());
+        }
         // 校验：不允许出借官方/托管供应商
         let mut cleaned = Vec::new();
         for entry in ids {
@@ -788,9 +813,22 @@ impl ShareManager {
         Ok(new_key)
     }
 
-    /// 设置消费侧路由偏好
+    /// 设置共享网络路由偏好。旧版传入 provider/consumer 时仍视为角色切换。
     pub async fn set_route_preference(&self, preference: String) -> Result<(), String> {
+        if matches!(preference.as_str(), "provider" | "consumer") {
+            return self.set_route_mode(preference).await;
+        }
+        if !matches!(
+            preference.as_str(),
+            "local_only" | "local_first" | "network_first" | "network_only"
+        ) {
+            return Err("不支持的共享网络路由偏好".to_string());
+        }
+        let mode = self.current_share_mode().await;
         let pref = RoutePreference::from_str_lossy(&preference);
+        if mode == ShareMode::Provider && pref != RoutePreference::LocalOnly {
+            return Err("供应商模式只能使用本地路由".to_string());
+        }
         {
             let mut table = self
                 .inner
@@ -800,7 +838,35 @@ impl ShareManager {
             table.preference = pref;
         }
         self.update_network_row(|row| row.route_preference = pref.as_str().to_string())
-            .await
+            .await?;
+        self.sync_route_table().await;
+        Ok(())
+    }
+
+    /// 设置本节点角色（provider / consumer）。角色与路由偏好相互独立。
+    pub async fn set_route_mode(&self, mode: String) -> Result<(), String> {
+        if !matches!(mode.as_str(), "provider" | "consumer") {
+            return Err("共享网络角色必须是 provider 或 consumer".to_string());
+        }
+        let mode = ShareMode::from_str_lossy(&mode);
+        self.inner
+            .db
+            .set_setting(SHARE_MODE_SETTING, mode.as_str())
+            .map_err(|e| e.to_string())?;
+        if mode == ShareMode::Provider {
+            self.inner.route_targets.write().await.clear();
+            self.persist_route_targets().await?;
+        }
+        self.update_network_row(|row| {
+            if mode == ShareMode::Provider {
+                row.route_preference = RoutePreference::LocalOnly.as_str().to_string();
+            } else if matches!(row.route_preference.as_str(), "provider" | "consumer") {
+                row.route_preference = RoutePreference::LocalOnly.as_str().to_string();
+            }
+        })
+        .await?;
+        self.sync_route_table().await;
+        Ok(())
     }
 
     /// 设置某个应用实际参与共享路由的远端 Provider target。
@@ -810,6 +876,9 @@ impl ShareManager {
         app_type: String,
         targets: Vec<String>,
     ) -> Result<(), String> {
+        if self.current_share_mode().await != ShareMode::Consumer {
+            return Err("当前节点是供应商模式，不能配置共享网络路由".to_string());
+        }
         if !matches!(
             app_type.as_str(),
             "claude" | "codex" | "gemini" | "grokbuild"
@@ -924,6 +993,31 @@ impl ShareManager {
             .unwrap_or(false)
     }
 
+    async fn share_mode_for_row(&self, row: &ShareNetworkRow) -> ShareMode {
+        self.inner
+            .db
+            .get_setting(SHARE_MODE_SETTING)
+            .ok()
+            .flatten()
+            .map(|value| ShareMode::from_str_lossy(&value))
+            .unwrap_or_else(|| ShareMode::from_str_lossy(&row.route_preference))
+    }
+
+    async fn current_share_mode(&self) -> ShareMode {
+        let Some(row) = self.inner.network.read().await.clone() else {
+            return ShareMode::Provider;
+        };
+        self.share_mode_for_row(&row).await
+    }
+
+    fn route_preference_for_row(&self, row: &ShareNetworkRow) -> RoutePreference {
+        match row.route_preference.as_str() {
+            "provider" => RoutePreference::LocalOnly,
+            "consumer" => RoutePreference::NetworkOnly,
+            value => RoutePreference::from_str_lossy(value),
+        }
+    }
+
     // ==================== 状态 ====================
 
     /// 完整组网状态（share_get_status）
@@ -1021,34 +1115,41 @@ impl ShareManager {
         let _ = key_storage; // 供前端风险提示（随 status 之外单独查询亦可）
 
         Ok(match row {
-            Some(row) => ShareNetworkStatus {
-                joined: true,
-                share_id: Some(row.share_id),
-                role: Some(row.role),
-                route_preference: RoutePreference::from_str_lossy(&row.route_preference)
-                    .as_str()
-                    .to_string(),
-                route_targets: self.route_targets_snapshot().await,
-                node_name: row.node_name,
-                relay_addr: row.relay_addr.or_else(|| load_global_relay_addr()),
-                shared_provider_ids: row.shared_provider_ids,
-                quota_scope: row.quota_scope,
-                quota_max_tokens: row.quota_max_tokens,
-                quota_per_peer: row.quota_per_peer,
-                provided_tokens,
-                consumed_tokens,
-                peers: peers_out,
-                pending_join: pending.map(|p| PendingJoinInfo {
-                    share_id: p.share_id,
-                    short_code: p.short_code,
-                    expires_at: p.expires_at,
-                }),
-                incoming_requests: requests,
-                bridge_running,
-                relay_connected,
-                relay_transport,
-                local_peer_id,
-            },
+            Some(row) => {
+                let mode = self.share_mode_for_row(&row).await;
+                ShareNetworkStatus {
+                    joined: true,
+                    share_id: Some(row.share_id),
+                    role: Some(row.role.clone()),
+                    route_preference: self
+                        .inner
+                        .route_table
+                        .read()
+                        .map(|table| table.preference.as_str().to_string())
+                        .unwrap_or_else(|_| RoutePreference::LocalOnly.as_str().to_string()),
+                    mode: mode.as_str().to_string(),
+                    route_targets: self.route_targets_snapshot().await,
+                    node_name: row.node_name,
+                    relay_addr: row.relay_addr.or_else(|| load_global_relay_addr()),
+                    shared_provider_ids: row.shared_provider_ids,
+                    quota_scope: row.quota_scope,
+                    quota_max_tokens: row.quota_max_tokens,
+                    quota_per_peer: row.quota_per_peer,
+                    provided_tokens,
+                    consumed_tokens,
+                    peers: peers_out,
+                    pending_join: pending.map(|p| PendingJoinInfo {
+                        share_id: p.share_id,
+                        short_code: p.short_code,
+                        expires_at: p.expires_at,
+                    }),
+                    incoming_requests: requests,
+                    bridge_running,
+                    relay_connected,
+                    relay_transport,
+                    local_peer_id,
+                }
+            }
             None => ShareNetworkStatus {
                 joined: false,
                 relay_addr: load_global_relay_addr(),

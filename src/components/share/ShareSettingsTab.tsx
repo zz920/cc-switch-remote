@@ -70,17 +70,13 @@ import {
   useSetNodeName,
   useSetQuota,
   useSetRelayAddr,
-  useSetRoutePreference,
+  useSetRouteMode,
   useSetSharedProviders,
   useShareKeyStorage,
   useShareStatus,
   useUnblockPeer,
 } from "@/lib/query/share";
-import type {
-  SharePeer,
-  ShareRoutePreference,
-  ShareStatus,
-} from "@/types/share";
+import type { SharePeer, ShareMode, ShareStatus } from "@/types/share";
 
 /** 支持出借供应商的应用 */
 const SHARE_APP_IDS: AppId[] = [...PROXY_APP_IDS];
@@ -205,8 +201,10 @@ export function ShareSettingsTab() {
           </AccordionTrigger>
           <AccordionContent className="space-y-4 border-t border-border/50 px-6 pb-6 pt-4">
             <NetworkUsageSection status={joinedStatus} />
-            <RoutePreferenceSection status={joinedStatus} />
-            <SharedProvidersSection status={joinedStatus} />
+            <ShareModeSection status={joinedStatus} />
+            {joinedStatus?.mode !== "consumer" && (
+              <SharedProvidersSection status={joinedStatus} />
+            )}
             <QuotaSection status={joinedStatus} />
           </AccordionContent>
         </AccordionItem>
@@ -241,22 +239,17 @@ export function ShareSettingsTab() {
   );
 }
 
-const ROUTE_PREFERENCES: ShareRoutePreference[] = [
-  "local_only",
-  "local_first",
-  "network_first",
-  "network_only",
-];
+const SHARE_MODES: ShareMode[] = ["provider", "consumer"];
 
-function RoutePreferenceSection({ status }: { status?: ShareStatus }) {
+function ShareModeSection({ status }: { status?: ShareStatus }) {
   const { t } = useTranslation();
-  const setRoutePreference = useSetRoutePreference();
+  const setRouteMode = useSetRouteMode();
   if (!status?.joined) return null;
 
-  const handleChange = async (preference: ShareRoutePreference) => {
-    if (preference === status.routePreference) return;
+  const handleChange = async (mode: ShareMode) => {
+    if (mode === status.mode) return;
     try {
-      await setRoutePreference.mutateAsync(preference);
+      await setRouteMode.mutateAsync(mode);
       toast.success(t("share.toast.saved"), { closeButton: true });
     } catch (error) {
       toast.error(
@@ -272,20 +265,20 @@ function RoutePreferenceSection({ status }: { status?: ShareStatus }) {
       })}
       description={t("share.routePreference.description", {
         defaultValue:
-          "控制共享网络 Provider 是否加入本机代理路由；对 Claude、Codex、Gemini 和 GrokBuild 全局生效。",
+          "一个节点只能选择一种角色；用户模式可在本地 Provider 与共享网络 Provider 之间切换。",
       })}
     >
       <div className="grid gap-2 sm:grid-cols-2">
-        {ROUTE_PREFERENCES.map((preference) => {
-          const active = status.routePreference === preference;
+        {SHARE_MODES.map((mode) => {
+          const active = status.mode === mode;
           return (
             <button
-              key={preference}
+              key={mode}
               type="button"
               role="radio"
               aria-checked={active}
-              disabled={setRoutePreference.isPending}
-              onClick={() => void handleChange(preference)}
+              disabled={setRouteMode.isPending}
+              onClick={() => void handleChange(mode)}
               className={`flex items-start gap-2 rounded-lg border px-3 py-3 text-left text-sm transition-colors ${
                 active
                   ? "border-primary/40 bg-primary/10 text-primary"
@@ -300,8 +293,8 @@ function RoutePreferenceSection({ status }: { status?: ShareStatus }) {
                 }`}
               />
               <span className="font-medium">
-                {t(`share.routePreference.${preference}`, {
-                  defaultValue: preference,
+                {t(`share.routePreference.${mode}`, {
+                  defaultValue: mode === "provider" ? "作为供应商" : "作为用户",
                 })}
               </span>
             </button>

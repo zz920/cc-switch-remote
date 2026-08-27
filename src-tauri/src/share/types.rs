@@ -46,6 +46,36 @@ pub enum RoutePreference {
     NetworkOnly,
 }
 
+/// 本节点在共享网络中的数据面角色。
+/// Provider 只提供本机供应商，Consumer 只消费其他节点供应商。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ShareMode {
+    /// 作为供应商，接收其他节点请求并通过本机路由转发。
+    #[default]
+    Provider,
+    /// 作为用户，只把请求发往其他节点，不使用本机 Provider。
+    Consumer,
+}
+
+impl ShareMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Provider => "provider",
+            Self::Consumer => "consumer",
+        }
+    }
+
+    /// 兼容旧版 route_preference：local_only/local_first 视为供应商，
+    /// network_first/network_only 视为用户。
+    pub fn from_str_lossy(value: &str) -> Self {
+        match value {
+            "consumer" | "network_first" | "network_only" => Self::Consumer,
+            _ => Self::Provider,
+        }
+    }
+}
+
 impl RoutePreference {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -143,6 +173,8 @@ pub struct ShareNetworkStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     pub route_preference: String,
+    /// 本节点角色：provider / consumer。
+    pub mode: String,
     /// 消费侧按应用选择的远端 Provider target。缺少某应用键表示全部可用 Provider。
     pub route_targets: HashMap<String, Vec<String>>,
     pub node_name: String,

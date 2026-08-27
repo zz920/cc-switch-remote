@@ -132,6 +132,12 @@ export function useSetRoutePreference() {
   );
 }
 
+export function useSetRouteMode() {
+  return useShareMutation((mode: "provider" | "consumer") =>
+    shareApi.setRouteMode(mode),
+  );
+}
+
 export function useSetRouteTargets() {
   return useShareMutation(
     ({ appType, targets }: { appType: string; targets: string[] }) =>

@@ -1729,6 +1729,7 @@ pub fn run() {
             commands::share_unblock_peer,
             commands::share_regenerate_key,
             commands::share_set_route_preference,
+            commands::share_set_route_mode,
             commands::share_set_route_targets,
             commands::share_test_provider,
             commands::share_set_relay_addr,

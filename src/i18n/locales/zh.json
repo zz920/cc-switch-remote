@@ -3274,10 +3274,13 @@
       "joinRequired": "加入共享网络后开始统计。"
     },
     "networkProvider": {
-      "title": "共享网络 Provider",
-      "description": "选择在线节点为 {{app}} 提供的远端 Provider；本地 Provider 不会被替换。",
+      "title": "共享网络",
+      "description": "用户模式可在本地 Provider 与网络节点提供的 {{app}} Provider 之间切换。",
       "active": "正在使用",
       "waiting": "可配置",
+      "total": "总: 0",
+      "used": "已使用: 0",
+      "dragHint": "拖动调整共享 Provider 顺序",
       "noneAvailable": "当前没有在线节点为 {{app}} 提供可用 Provider。",
       "providerCount": "{{count}} 个 Provider",
       "selected": "已选择",
@@ -3289,6 +3292,7 @@
       "usage": "查看用量",
       "refresh": "刷新共享 Provider",
       "saved": "共享 Provider 路由已更新",
+      "localHidden": "当前为用户模式，本地 Provider 不参与路由。",
       "proxyRequired": "共享 Provider 已选择，但 {{app}} 需要先开启本地路由接管，请求才会经过共享网络。",
       "openRouting": "配置路由"
     },
@@ -3364,11 +3368,9 @@
     },
     "routePreference": {
       "title": "共享网络路由模式",
-      "description": "控制共享网络 Provider 是否加入本机代理路由；对 Claude、Codex、Gemini 和 GrokBuild 全局生效。",
-      "local_only": "关闭共享网络",
-      "local_first": "本地优先，共享网络作为后备",
-      "network_first": "共享网络优先，本地作为后备",
-      "network_only": "仅使用共享网络"
+      "description": "一个节点只能选择一种角色；用户模式可在本地 Provider 与共享网络 Provider 之间切换。",
+      "provider": "作为供应商",
+      "consumer": "作为用户"
     },
     "quota": {
       "title": "用量限额",
