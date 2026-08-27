@@ -87,6 +87,10 @@ export const shareApi = {
     return invoke("share_set_route_preference", { preference });
   },
 
+  async setRouteMode(mode: "provider" | "consumer"): Promise<void> {
+    return invoke("share_set_route_mode", { mode });
+  },
+
   /** 设置某个应用实际参与路由的共享 Provider target */
   async setRouteTargets(appType: string, targets: string[]): Promise<void> {
     return invoke("share_set_route_targets", { appType, targets });

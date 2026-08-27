@@ -3274,19 +3274,27 @@
       "joinRequired": "共有ネットワークへの参加後に集計を開始します。"
     },
     "networkProvider": {
-      "title": "共有ネットワークプロバイダー",
-      "description": "オンラインノードが {{app}} 向けに共有する API をローカルルートに追加します。",
+      "title": "共有ネットワーク",
+      "description": "ユーザーモードでは、ローカル Provider とネットワークノードの {{app}} Provider を切り替えられます。",
       "active": "使用中",
-      "configured": "有効・ルート待機中",
-      "disabled": "無効",
-      "enable": "共有ネットワークプロバイダーを使用",
-      "available": "利用可能なノード：{{count}} 台",
-      "noneAvailable": "現在 {{app}} の API を提供するオンラインノードはありません",
-      "preference": "共有ルートの優先順位",
-      "globalHint": "この設定は Claude、Codex、Gemini、GrokBuild の共有ルートに共通で適用されます。",
-      "proxyRequired": "共有プロバイダーは有効ですが、{{app}} でローカルルートの引き継ぎを有効にする必要があります。",
-      "openRouting": "ルートを設定",
-      "manage": "共有ネットワークを管理"
+      "waiting": "選択してください",
+      "total": "合計: 0",
+      "used": "使用済み: 0",
+      "dragHint": "ドラッグして共有 Provider の順序を調整",
+      "noneAvailable": "現在 {{app}} を提供するオンラインノードはありません",
+      "providerCount": "{{count}} Provider",
+      "selected": "選択済み",
+      "selectProvider": "{{name}} を選択",
+      "modelsUnknown": "モデル情報を更新中",
+      "use": "使用",
+      "check": "接続確認",
+      "checkPassed": "共有 Provider に接続できます",
+      "usage": "使用量を表示",
+      "refresh": "共有ネットワークを更新",
+      "saved": "共有ネットワークのルートを更新しました",
+      "localHidden": "ユーザーモードではローカル Provider はルーティングに使用されません。",
+      "proxyRequired": "{{app}} のローカルルート引き継ぎを有効にすると共有ネットワークを利用できます。",
+      "openRouting": "ルートを設定"
     },
     "status": {
       "connected": "接続中",
@@ -3359,11 +3367,10 @@
       "unnamed": "名前のないノード"
     },
     "routePreference": {
-      "title": "ルーティング優先",
-      "local_only": "共有ネットワークを使用しない",
-      "local_first": "ローカル優先",
-      "network_first": "ネットワーク優先",
-      "network_only": "ネットワークのみ"
+      "title": "共有ネットワークの役割",
+      "description": "ノードは一度に1つの役割だけを選択します。ユーザーモードではローカルと共有 Provider を切り替え、Provider モードではローカル Provider のみを提供します。",
+      "provider": "Provider として参加",
+      "consumer": "ユーザーとして参加"
     },
     "quota": {
       "title": "使用量の上限",

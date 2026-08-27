@@ -44,6 +44,7 @@ export interface ShareStatus {
   shareId?: string;
   role?: string;
   routePreference: string;
+  mode: ShareMode;
   /** 按应用选择的远端 Provider target；缺少应用键表示全部可用 Provider */
   routeTargets: Record<string, string[]>;
   nodeName: string;
@@ -64,6 +65,8 @@ export interface ShareStatus {
   relayTransport?: string;
   localPeerId: string;
 }
+
+export type ShareMode = "provider" | "consumer";
 
 /** 创建网络结果 */
 export interface CreateNetworkResult {

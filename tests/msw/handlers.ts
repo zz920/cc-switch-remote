@@ -47,6 +47,7 @@ export const handlers = [
     success<ShareStatus>({
       joined: false,
       routePreference: "local_only",
+      mode: "provider",
       routeTargets: {},
       nodeName: "",
       sharedProviderIds: [],

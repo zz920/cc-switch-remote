@@ -50,6 +50,7 @@ import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
+import { useSetRoutePreference, useShareStatus } from "@/lib/query/share";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -103,6 +104,28 @@ export function ProviderList({
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
+  );
+  const { data: shareStatus } = useShareStatus();
+  const isShareConsumer =
+    isProxyAppId(appId) &&
+    shareStatus?.joined === true &&
+    shareStatus.mode === "consumer";
+  const setRoutePreference = useSetRoutePreference();
+  const handleProviderSwitch = useCallback(
+    async (provider: Provider) => {
+      if (isShareConsumer) {
+        try {
+          await setRoutePreference.mutateAsync("local_only");
+        } catch (error) {
+          toast.error(
+            t("share.toast.failed", { detail: extractErrorMessage(error) }),
+          );
+          return;
+        }
+      }
+      onSwitch(provider);
+    },
+    [isShareConsumer, onSwitch, setRoutePreference, t],
   );
 
   const { data: opencodeLiveIds } = useQuery({
@@ -478,7 +501,7 @@ export function ProviderList({
                 }
                 isOmo={isOmo}
                 isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
+                onSwitch={handleProviderSwitch}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
