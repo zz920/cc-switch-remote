@@ -42,7 +42,7 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
 import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
-interface DragHandleProps {
+export interface ProviderDragHandleProps {
   attributes: DraggableAttributes;
   listeners: DraggableSyntheticListeners;
   isDragging: boolean;
@@ -69,7 +69,7 @@ interface ProviderCardProps {
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
-  dragHandleProps?: DragHandleProps;
+  dragHandleProps?: ProviderDragHandleProps;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中

@@ -147,6 +147,20 @@ pub async fn share_set_route_targets(
         .await
 }
 
+/// 启用共享 Provider，并同步 Agent 的 live 配置与本地代理接管。
+#[tauri::command]
+pub async fn share_activate_provider(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    peer_id: String,
+    provider_id: String,
+) -> Result<(), String> {
+    state
+        .share_manager
+        .activate_shared_provider(app_type, peer_id, provider_id)
+        .await
+}
+
 /// 检测远端共享 Provider 的连通性。
 #[tauri::command]
 pub async fn share_test_provider(

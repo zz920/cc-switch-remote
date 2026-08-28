@@ -405,10 +405,26 @@ fn shared_provider_infos(db: &Database, whitelist: &HashSet<String>) -> Vec<Shar
             provider_id: provider.id.clone(),
             name: provider.name.clone(),
             models: provider_models(&provider),
+            default_model: provider_default_model(&provider),
         });
     }
     out.sort_by(|a, b| a.app.cmp(&b.app).then(a.name.cmp(&b.name)));
     out
+}
+
+/// 只通告模型标识，不通告 base URL、认证信息或其余 Provider 配置。
+fn provider_default_model(provider: &Provider) -> Option<String> {
+    let config = provider
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())?;
+    let document = config.parse::<toml_edit::DocumentMut>().ok()?;
+    document
+        .get("model")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn provider_models(provider: &Provider) -> Vec<String> {
@@ -429,26 +445,8 @@ fn provider_models(provider: &Provider) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if models.is_empty() {
-        if let Some(config) = provider
-            .settings_config
-            .get("config")
-            .and_then(|v| v.as_str())
-        {
-            for line in config.lines() {
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                if key.trim() != "model" {
-                    continue;
-                }
-                let model = value.trim().trim_matches('"').trim_matches('\'');
-                if !model.is_empty() {
-                    models.push(model.to_string());
-                }
-                break;
-            }
-        }
+    if let Some(default_model) = provider_default_model(provider) {
+        models.push(default_model);
     }
     models.sort();
     models.dedup();
@@ -459,6 +457,7 @@ fn provider_models(provider: &Provider) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn infer_app_type_paths() {
@@ -471,5 +470,32 @@ mod tests {
             Some("gemini")
         );
         assert_eq!(infer_app_type("/unknown"), None);
+    }
+
+    #[test]
+    fn provider_capability_uses_top_level_codex_model_as_default() {
+        let provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "config": "model_provider = \"kimi\"\nmodel = \"kimi-k2.5\"\n\n[model_providers.kimi]\nbase_url = \"https://example.invalid/v1\"\n",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "kimi-k2" },
+                        { "model": "kimi-k2.5" }
+                    ]
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            provider_default_model(&provider).as_deref(),
+            Some("kimi-k2.5")
+        );
+        assert_eq!(
+            provider_models(&provider),
+            vec!["kimi-k2".to_string(), "kimi-k2.5".to_string()]
+        );
     }
 }

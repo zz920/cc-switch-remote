@@ -6,6 +6,8 @@ export interface ShareProviderInfo {
   providerId: string;
   name: string;
   models: string[];
+  /** Provider 当前配置的默认模型；旧版节点可能不通告。 */
+  defaultModel?: string | null;
 }
 
 /** 节点信息 */
@@ -45,7 +47,7 @@ export interface ShareStatus {
   role?: string;
   routePreference: string;
   mode: ShareMode;
-  /** 按应用选择的远端 Provider target；缺少应用键表示全部可用 Provider */
+  /** 按应用选择的远端 Provider target；缺少应用键表示使用本地 Provider */
   routeTargets: Record<string, string[]>;
   nodeName: string;
   relayAddr?: string;

@@ -1,6 +1,7 @@
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
+import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import {
+  arrayMove,
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
@@ -50,7 +51,22 @@ import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
-import { useSetRoutePreference, useShareStatus } from "@/lib/query/share";
+import { useSetRouteTargets, useShareStatus } from "@/lib/query/share";
+
+const SHARED_PROVIDER_SORT_ID = "__tokentap_shared_network_provider__";
+
+function sharedProviderSortStorageKey(appId: AppId) {
+  return `provider-list:${appId}:shared-network-index`;
+}
+
+function readSharedProviderSortIndex(appId: AppId): number {
+  if (typeof window === "undefined") return Number.MAX_SAFE_INTEGER;
+  const value = Number.parseInt(
+    window.localStorage.getItem(sharedProviderSortStorageKey(appId)) ?? "",
+    10,
+  );
+  return Number.isFinite(value) && value >= 0 ? value : Number.MAX_SAFE_INTEGER;
+}
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -68,7 +84,6 @@ interface ProviderListProps {
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
   onOpenShareSettings?: () => void;
-  onOpenRoutingSettings?: () => void;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
@@ -92,7 +107,6 @@ export function ProviderList({
   onOpenTerminal,
   onCreate,
   onOpenShareSettings,
-  onOpenRoutingSettings,
   isLoading = false,
   isProxyRunning = false,
   isProxyTakeover = false,
@@ -101,21 +115,31 @@ export function ProviderList({
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
-  const { sortedProviders, sensors, handleDragEnd } = useDragSort(
-    providers,
-    appId,
-  );
+  const { sortedProviders, sensors } = useDragSort(providers, appId);
   const { data: shareStatus } = useShareStatus();
   const isShareConsumer =
     isProxyAppId(appId) &&
     shareStatus?.joined === true &&
     shareStatus.mode === "consumer";
-  const setRoutePreference = useSetRoutePreference();
+  const isSharedNetworkActive =
+    isShareConsumer && (shareStatus.routeTargets?.[appId]?.length ?? 0) > 0;
+  const setRouteTargets = useSetRouteTargets();
+  const [shareCardIndex, setShareCardIndex] = useState(() =>
+    readSharedProviderSortIndex(appId),
+  );
+
+  useEffect(() => {
+    setShareCardIndex(readSharedProviderSortIndex(appId));
+  }, [appId]);
+
   const handleProviderSwitch = useCallback(
     async (provider: Provider) => {
-      if (isShareConsumer) {
+      if (isSharedNetworkActive) {
         try {
-          await setRoutePreference.mutateAsync("local_only");
+          await setRouteTargets.mutateAsync({
+            appType: appId,
+            targets: [],
+          });
         } catch (error) {
           toast.error(
             t("share.toast.failed", { detail: extractErrorMessage(error) }),
@@ -125,7 +149,7 @@ export function ProviderList({
       }
       onSwitch(provider);
     },
-    [isShareConsumer, onSwitch, setRoutePreference, t],
+    [appId, isSharedNetworkActive, onSwitch, setRouteTargets, t],
   );
 
   const { data: opencodeLiveIds } = useQuery({
@@ -345,6 +369,81 @@ export function ProviderList({
     });
   }, [searchTerm, sortedProviders]);
 
+  const fullSortableIds = useMemo(() => {
+    const ids = sortedProviders.map((provider) => provider.id);
+    if (!isShareConsumer) return ids;
+    const insertionIndex = Math.min(Math.max(shareCardIndex, 0), ids.length);
+    ids.splice(insertionIndex, 0, SHARED_PROVIDER_SORT_ID);
+    return ids;
+  }, [isShareConsumer, shareCardIndex, sortedProviders]);
+
+  const renderedSortableIds = useMemo(() => {
+    const visibleProviderIds = new Set(
+      filteredProviders.map((provider) => provider.id),
+    );
+    return fullSortableIds.filter(
+      (id) =>
+        id === SHARED_PROVIDER_SORT_ID || visibleProviderIds.has(String(id)),
+    );
+  }, [filteredProviders, fullSortableIds]);
+
+  const handleCombinedDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const oldIndex = fullSortableIds.indexOf(String(active.id));
+      const newIndex = fullSortableIds.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reorderedIds = arrayMove(fullSortableIds, oldIndex, newIndex);
+      const providerIds = reorderedIds.filter(
+        (id) => id !== SHARED_PROVIDER_SORT_ID,
+      );
+      const updates = providerIds.map((id, index) => ({
+        id,
+        sortIndex: index,
+      }));
+      const nextShareIndex = reorderedIds.indexOf(SHARED_PROVIDER_SORT_ID);
+
+      try {
+        await providersApi.updateSortOrder(updates, appId);
+        if (nextShareIndex >= 0) {
+          setShareCardIndex(nextShareIndex);
+          window.localStorage.setItem(
+            sharedProviderSortStorageKey(appId),
+            String(nextShareIndex),
+          );
+        }
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", appId],
+        });
+        if (isProxyAppId(appId)) {
+          await queryClient.invalidateQueries({
+            queryKey: ["failoverQueue", appId],
+          });
+        }
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error("Failed to update tray menu after sort", trayError);
+        }
+        toast.success(
+          t("provider.sortUpdated", { defaultValue: "排序已更新" }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        console.error("Failed to update provider sort order", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+      }
+    },
+    [appId, fullSortableIds, queryClient, t],
+  );
+
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
 
@@ -447,7 +546,6 @@ export function ProviderList({
           isProxyRunning={isProxyRunning}
           isProxyTakeover={isProxyTakeover}
           onOpenShareSettings={onOpenShareSettings}
-          onOpenRoutingSettings={onOpenRoutingSettings}
         />
         {piStateErrorNotice}
         <ProviderEmptyState
@@ -463,14 +561,30 @@ export function ProviderList({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
+      onDragEnd={handleCombinedDragEnd}
     >
       <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
+        items={renderedSortableIds}
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
-          {filteredProviders.map((provider) => {
+          {renderedSortableIds.map((itemId) => {
+            if (itemId === SHARED_PROVIDER_SORT_ID) {
+              return (
+                <SortableShareProviderRouteCard
+                  key={SHARED_PROVIDER_SORT_ID}
+                  appId={appId}
+                  isProxyRunning={isProxyRunning}
+                  isProxyTakeover={isProxyTakeover}
+                  onOpenShareSettings={onOpenShareSettings}
+                />
+              );
+            }
+
+            const provider = sortedProviders.find(
+              (candidate) => candidate.id === itemId,
+            );
+            if (!provider) return null;
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
@@ -478,8 +592,9 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
-            const isCurrent =
-              appId === "pi"
+            const isCurrent = isSharedNetworkActive
+              ? false
+              : appId === "pi"
                 ? false
                 : isOmo
                   ? isOmoCurrent
@@ -515,7 +630,9 @@ export function ProviderList({
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={supportsFailover && isProxyRunning}
                 isProxyTakeover={supportsFailover && isProxyTakeover}
-                isAutoFailoverEnabled={isFailoverModeActive}
+                isAutoFailoverEnabled={
+                  isSharedNetworkActive ? false : isFailoverModeActive
+                }
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
                 onToggleFailover={
@@ -524,7 +641,9 @@ export function ProviderList({
                     : undefined
                 }
                 activeProviderId={
-                  supportsFailover ? activeProviderId : undefined
+                  supportsFailover && !isSharedNetworkActive
+                    ? activeProviderId
+                    : undefined
                 }
                 isDefaultModel={
                   appId === "hermes"
@@ -638,7 +757,7 @@ export function ProviderList({
         )}
       </AnimatePresence>
 
-      {filteredProviders.length === 0 ? (
+      {filteredProviders.length === 0 && !isShareConsumer ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
@@ -647,13 +766,6 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
-      <ShareProviderRouteCard
-        appId={appId}
-        isProxyRunning={isProxyRunning}
-        isProxyTakeover={isProxyTakeover}
-        onOpenShareSettings={onOpenShareSettings}
-        onOpenRoutingSettings={onOpenRoutingSettings}
-      />
     </div>
   );
 }
@@ -689,6 +801,46 @@ interface SortableProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
+}
+
+interface SortableShareProviderRouteCardProps {
+  appId: AppId;
+  isProxyRunning: boolean;
+  isProxyTakeover: boolean;
+  onOpenShareSettings?: () => void;
+}
+
+function SortableShareProviderRouteCard({
+  appId,
+  isProxyRunning,
+  isProxyTakeover,
+  onOpenShareSettings,
+}: SortableShareProviderRouteCardProps) {
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: SHARED_PROVIDER_SORT_ID });
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <ShareProviderRouteCard
+        appId={appId}
+        isProxyRunning={isProxyRunning}
+        isProxyTakeover={isProxyTakeover}
+        onOpenShareSettings={onOpenShareSettings}
+        dragHandleProps={{ attributes, listeners, isDragging }}
+      />
+    </div>
+  );
 }
 
 function SortableProviderCard({
