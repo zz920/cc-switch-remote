@@ -3293,7 +3293,7 @@
       "usage": "查看用量",
       "refresh": "刷新共享 Provider",
       "saved": "共享 Provider 路由已更新",
-      "localHidden": "目前為使用者模式，本機 Provider 不參與路由。",
+        "localHidden": "使用者模式下，本機 Provider 與共享網路 Provider 均可作為目前路由。",
       "proxyRequired": "已選擇共享 Provider，但 {{app}} 需要先開啟本地路由接管，請求才會經過共享網路。",
       "openRouting": "設定路由"
     },

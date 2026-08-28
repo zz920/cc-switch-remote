@@ -3292,7 +3292,7 @@
       "usage": "查看用量",
       "refresh": "刷新共享 Provider",
       "saved": "共享 Provider 路由已更新",
-      "localHidden": "当前为用户模式，本地 Provider 不参与路由。",
+        "localHidden": "用户模式下，本地 Provider 与共享网络 Provider 均可作为当前路由。",
       "proxyRequired": "共享 Provider 已选择，但 {{app}} 需要先开启本地路由接管，请求才会经过共享网络。",
       "openRouting": "配置路由"
     },

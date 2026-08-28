@@ -3292,7 +3292,7 @@
       "usage": "View usage",
       "refresh": "Refresh shared Providers",
       "saved": "Shared Provider routing updated",
-      "localHidden": "User mode is active; local Providers are not used for routing.",
+        "localHidden": "In User mode, either a local Provider or a Share Network Provider can be the active route.",
       "proxyRequired": "Shared Providers are selected, but {{app}} must enable local routing takeover before requests can use the share network.",
       "openRouting": "Configure Routing"
     },

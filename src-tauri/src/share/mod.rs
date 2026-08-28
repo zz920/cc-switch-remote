@@ -25,6 +25,7 @@ mod tests_e2e;
 pub mod types;
 
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use http::HeaderMap;
@@ -38,7 +39,10 @@ use crate::database::ShareNetworkRow;
 
 use bridge::BridgeHandle;
 use ingress::AdmissionCtx;
-use route_hook::{ConsumerRouteHook, RemotePeerRoute, RemoteRouteTable};
+use route_hook::{
+    remote_target_id, synthetic_remote_provider_for_provider, ConsumerRouteHook, RemotePeerRoute,
+    RemoteRouteTable,
+};
 use swarm::{JoinRequestWire, JoinResponseWire, SwarmCmd, SwarmEventOut, SwarmHandle};
 use types::*;
 
@@ -76,7 +80,7 @@ pub struct ShareManagerInner {
     relay_transport: AsyncRwLock<Option<String>>,
     /// 已知节点（含离线，key = peer_id base58）
     peers: Arc<AsyncRwLock<HashMap<String, PeerRuntime>>>,
-    /// 消费侧按应用选择的远端 Provider target（缺少 app 键表示全部）
+    /// 消费侧按应用选择的远端 Provider target（缺少 app 键表示使用本地 Provider）
     route_targets: AsyncRwLock<HashMap<String, HashSet<String>>>,
     /// 加入申请（出借方待审批，key = peer_id）
     join_requests: Arc<AsyncRwLock<HashMap<String, JoinRequestInfo>>>,
@@ -701,11 +705,26 @@ impl ShareManager {
     /// 退出/解散网络
     pub async fn leave_network(&self) -> Result<(), String> {
         let row = self.inner.network.read().await.clone();
+        let shared_apps = self
+            .inner
+            .route_targets
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
         self.stop_runtime().await;
         *self.inner.network.write().await = None;
         *self.inner.share_key.write().await = None;
         self.inner.route_targets.write().await.clear();
         let _ = self.persist_route_targets().await;
+        self.sync_route_table().await;
+        if let Err(error) = self
+            .restore_local_provider_live_for_apps(&shared_apps)
+            .await
+        {
+            log::error!("退出共享网络后恢复本地 Provider 配置失败: {error}");
+        }
         if let Some(row) = row {
             let _ = keystore::delete_share_key(&row.share_id_hash);
         }
@@ -849,14 +868,24 @@ impl ShareManager {
             return Err("共享网络角色必须是 provider 或 consumer".to_string());
         }
         let mode = ShareMode::from_str_lossy(&mode);
+        if mode == ShareMode::Provider {
+            let previous = self.inner.route_targets.read().await.clone();
+            let shared_apps = previous.keys().cloned().collect::<Vec<_>>();
+            self.inner.route_targets.write().await.clear();
+            if let Err(error) = self.persist_route_targets().await {
+                *self.inner.route_targets.write().await = previous;
+                return Err(error);
+            }
+            self.sync_route_table().await;
+            // 共享 Codex/Claude/Grok 会把 live 中的模型字段投影成远端
+            // Provider；切回供应商角色时必须同步回当前本地 Provider。
+            self.restore_local_provider_live_for_apps(&shared_apps)
+                .await?;
+        }
         self.inner
             .db
             .set_setting(SHARE_MODE_SETTING, mode.as_str())
             .map_err(|e| e.to_string())?;
-        if mode == ShareMode::Provider {
-            self.inner.route_targets.write().await.clear();
-            self.persist_route_targets().await?;
-        }
         self.update_network_row(|row| {
             if mode == ShareMode::Provider {
                 row.route_preference = RoutePreference::LocalOnly.as_str().to_string();
@@ -890,13 +919,243 @@ impl ShareManager {
             .map(|target| target.trim().to_string())
             .filter(|target| !target.is_empty())
             .collect();
-        self.inner
-            .route_targets
-            .write()
-            .await
-            .insert(app_type, cleaned);
-        self.persist_route_targets().await?;
+        let previous = self.inner.route_targets.read().await.clone();
+        {
+            let mut route_targets = self.inner.route_targets.write().await;
+            if cleaned.is_empty() {
+                route_targets.remove(&app_type);
+            } else {
+                route_targets.insert(app_type, cleaned);
+            }
+        }
+        if let Err(error) = self.persist_route_targets().await {
+            *self.inner.route_targets.write().await = previous;
+            self.sync_route_table().await;
+            return Err(error);
+        }
         self.sync_route_table().await;
+        Ok(())
+    }
+
+    /// 启用一个共享 Provider，并把 Agent live 配置投影到本地代理。
+    ///
+    /// 这不能拆成前端的「先接管、再选 target」两个调用：Codex 的 live
+    /// `model` / `model_provider` 必须来自所选远端 Provider，而不是当前本地
+    /// Provider，否则界面显示已选中但 Codex 启动后会直接请求错误模型。
+    pub async fn activate_shared_provider(
+        &self,
+        app_type: String,
+        peer_id: String,
+        provider_id: String,
+    ) -> Result<(), String> {
+        if self.current_share_mode().await != ShareMode::Consumer {
+            return Err("当前节点是供应商模式，不能启用共享 Provider".to_string());
+        }
+        if !matches!(
+            app_type.as_str(),
+            "claude" | "codex" | "gemini" | "grokbuild"
+        ) {
+            return Err(format!("不支持的共享路由应用: {app_type}"));
+        }
+
+        let (peer_name, advertised) = {
+            let peers = self.inner.peers.read().await;
+            let peer = peers
+                .get(&peer_id)
+                .filter(|peer| peer.online && peer.authenticated)
+                .ok_or_else(|| "共享节点当前不可用".to_string())?;
+            let provider = peer
+                .providers
+                .iter()
+                .find(|provider| provider.app == app_type && provider.provider_id == provider_id)
+                .cloned()
+                .ok_or_else(|| "该 Provider 尚未在节点能力信息中出现".to_string())?;
+            (peer.name.clone(), provider)
+        };
+        if app_type == "codex"
+            && advertised
+                .default_model
+                .as_deref()
+                .or_else(|| advertised.models.first().map(String::as_str))
+                .is_none()
+        {
+            return Err(
+                "该共享 Codex Provider 没有通告默认模型，请先在提供方保存模型配置并刷新网络"
+                    .to_string(),
+            );
+        }
+
+        let bridge_port = self
+            .inner
+            .route_table
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .bridge_port;
+        let synthetic = synthetic_remote_provider_for_provider(
+            &app_type,
+            &peer_id,
+            &peer_name,
+            &advertised,
+            bridge_port,
+        );
+        let proxy = self
+            .inner
+            .proxy_service
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "本地路由服务尚未初始化".to_string())?;
+        let takeover = proxy.get_takeover_status().await?;
+        let takeover_was_active = match app_type.as_str() {
+            "claude" => takeover.claude,
+            "codex" => takeover.codex,
+            "gemini" => takeover.gemini,
+            "grokbuild" => takeover.grokbuild,
+            _ => false,
+        };
+        let codex_before = if app_type == "codex" {
+            Some(
+                crate::codex_config::CodexLiveStateSnapshot::capture()
+                    .map_err(|error| format!("捕获 Codex 配置状态失败: {error}"))?,
+            )
+        } else {
+            None
+        };
+
+        proxy.set_takeover_for_app(&app_type, true).await?;
+        let live_result = match app_type.as_str() {
+            "codex" => {
+                proxy
+                    .sync_codex_live_from_provider_while_proxy_active(&synthetic)
+                    .await
+            }
+            "claude" => {
+                proxy
+                    .sync_claude_live_from_provider_while_proxy_active(&synthetic)
+                    .await
+            }
+            "grokbuild" => {
+                proxy
+                    .sync_grok_live_from_provider_while_proxy_active(&synthetic)
+                    .await
+            }
+            // Gemini 接管只需要固定本地代理地址；实际 Provider 由路由 target 决定。
+            "gemini" => Ok(()),
+            _ => unreachable!(),
+        };
+        if let Err(error) = live_result {
+            self.rollback_shared_activation(
+                &proxy,
+                &app_type,
+                takeover_was_active,
+                codex_before.as_ref(),
+            )
+            .await;
+            return Err(error);
+        }
+
+        if let Err(error) = self
+            .set_route_targets(
+                app_type.clone(),
+                vec![remote_target_id(&peer_id, &provider_id)],
+            )
+            .await
+        {
+            self.rollback_shared_activation(
+                &proxy,
+                &app_type,
+                takeover_was_active,
+                codex_before.as_ref(),
+            )
+            .await;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn rollback_shared_activation(
+        &self,
+        proxy: &crate::services::ProxyService,
+        app_type: &str,
+        takeover_was_active: bool,
+        codex_before: Option<&crate::codex_config::CodexLiveStateSnapshot>,
+    ) {
+        let rollback = if !takeover_was_active {
+            proxy.set_takeover_for_app(app_type, false).await
+        } else if let Some(snapshot) = codex_before {
+            snapshot
+                .restore_preserving_newer_same_account_auth()
+                .map_err(|error| error.to_string())
+        } else {
+            Ok(())
+        };
+        if let Err(error) = rollback {
+            log::error!("共享 Provider 启用失败后恢复 {app_type} 配置失败: {error}");
+        }
+    }
+
+    async fn restore_local_provider_live_for_apps(
+        &self,
+        app_types: &[String],
+    ) -> Result<(), String> {
+        if app_types.is_empty() {
+            return Ok(());
+        }
+        let Some(proxy) = self.inner.proxy_service.read().await.clone() else {
+            return Err("本地路由服务尚未初始化".to_string());
+        };
+        let takeover = proxy.get_takeover_status().await?;
+
+        for app_type in app_types {
+            let is_active = match app_type.as_str() {
+                "claude" => takeover.claude,
+                "codex" => takeover.codex,
+                "gemini" => takeover.gemini,
+                "grokbuild" => takeover.grokbuild,
+                _ => false,
+            };
+            if !is_active || app_type == "gemini" {
+                continue;
+            }
+
+            let app = crate::app_config::AppType::from_str(app_type)
+                .map_err(|error| format!("无效的应用类型 {app_type}: {error}"))?;
+            let provider_id = crate::settings::get_effective_current_provider(&self.inner.db, &app)
+                .map_err(|error| format!("读取 {app_type} 当前本地 Provider 失败: {error}"))?;
+            let provider = match provider_id {
+                Some(provider_id) => self
+                    .inner
+                    .db
+                    .get_provider_by_id(&provider_id, app_type)
+                    .map_err(|error| format!("读取 {app_type} 本地 Provider 失败: {error}"))?,
+                None => None,
+            };
+            let Some(provider) = provider else {
+                // 没有可投影的本地 Provider 时恢复 Agent 原生配置，避免保留
+                // tokentap_shared model_provider 和占位认证信息。
+                proxy.set_takeover_for_app(app_type, false).await?;
+                continue;
+            };
+
+            match app_type.as_str() {
+                "codex" => {
+                    proxy
+                        .sync_codex_live_from_provider_while_proxy_active(&provider)
+                        .await?
+                }
+                "claude" => {
+                    proxy
+                        .sync_claude_live_from_provider_while_proxy_active(&provider)
+                        .await?
+                }
+                "grokbuild" => {
+                    proxy
+                        .sync_grok_live_from_provider_while_proxy_active(&provider)
+                        .await?
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 

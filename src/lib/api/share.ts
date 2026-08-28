@@ -96,6 +96,19 @@ export const shareApi = {
     return invoke("share_set_route_targets", { appType, targets });
   },
 
+  /** 启用共享 Provider，并同步 Agent live 配置与本地代理接管。 */
+  async activateProvider(
+    appType: string,
+    peerId: string,
+    providerId: string,
+  ): Promise<void> {
+    return invoke("share_activate_provider", {
+      appType,
+      peerId,
+      providerId,
+    });
+  },
+
   /** 检测远端共享 Provider 连通性 */
   async testProvider(
     appType: string,

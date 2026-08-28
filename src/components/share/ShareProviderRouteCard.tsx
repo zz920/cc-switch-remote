@@ -1,24 +1,33 @@
 import {
   Activity,
   BarChart3,
+  Check,
+  Copy,
+  Edit,
   GripVertical,
   Loader2,
   Network,
+  Play,
   RefreshCw,
+  Trash2,
+  type LucideIcon,
 } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { ProviderDragHandleProps } from "@/components/providers/ProviderCard";
 import { getAppLabel, isProxyAppId } from "@/config/appConfig";
 import type { AppId } from "@/lib/api";
+import { proxyKeys } from "@/lib/query/proxy";
 import {
-  useSetRoutePreference,
-  useSetRouteTargets,
+  useActivateSharedProvider,
   useShareStatus,
   useTestSharedProvider,
 } from "@/lib/query/share";
+import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface ShareProviderRouteCardProps {
@@ -26,7 +35,7 @@ interface ShareProviderRouteCardProps {
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
   onOpenShareSettings?: () => void;
-  onOpenRoutingSettings?: () => void;
+  dragHandleProps?: ProviderDragHandleProps;
 }
 
 interface ProviderEntry {
@@ -35,20 +44,55 @@ interface ProviderEntry {
   providerId: string;
   name: string;
   models: string[];
+  defaultModel?: string | null;
   coverage: Record<string, number>;
 }
 
-/** 共享网络 Provider：用户模式下作为本地 Provider 列表中的一个可选路由。 */
+function formatRefreshTime(timestamp: number, t: TFunction) {
+  const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60_000);
+  if (minutes < 1) {
+    return t("share.networkProvider.justNow", { defaultValue: "刚刚" });
+  }
+  return t("share.networkProvider.minutesAgo", {
+    count: minutes,
+    defaultValue: `${minutes} 分钟前`,
+  });
+}
+
+function DisabledAction({
+  icon: Icon,
+  label,
+}: {
+  icon: LucideIcon;
+  label: string;
+}) {
+  return (
+    <span className="inline-flex cursor-not-allowed" title={label}>
+      <Button
+        size="icon"
+        variant="ghost"
+        disabled
+        aria-label={label}
+        className="h-8 w-8 cursor-not-allowed p-1 text-muted-foreground opacity-40"
+      >
+        <Icon className="h-4 w-4" />
+      </Button>
+    </span>
+  );
+}
+
+/** 用户模式下作为当前 Agent Provider 列表中的一个可选共享路由。 */
 export function ShareProviderRouteCard({
   appId,
   isProxyRunning,
   isProxyTakeover,
   onOpenShareSettings,
+  dragHandleProps,
 }: ShareProviderRouteCardProps) {
   const { t } = useTranslation();
-  const { data: status, refetch, isFetching } = useShareStatus();
-  const setRoutePreference = useSetRoutePreference();
-  const setRouteTargets = useSetRouteTargets();
+  const queryClient = useQueryClient();
+  const { data: status, refetch, isFetching, dataUpdatedAt } = useShareStatus();
+  const activateProvider = useActivateSharedProvider();
   const testProvider = useTestSharedProvider();
   const [lastCheck, setLastCheck] = useState<
     { target: string; message: string; success: boolean } | undefined
@@ -79,6 +123,7 @@ export function ShareProviderRouteCard({
           providerId: provider.providerId,
           name: provider.name,
           models: provider.models ?? [],
+          defaultModel: provider.defaultModel,
           coverage: Object.fromEntries(
             (provider.models ?? []).map((model) => [
               model,
@@ -93,22 +138,34 @@ export function ShareProviderRouteCard({
     return null;
   }
 
-  const configuredTargets = status.routeTargets?.[appId] ?? [];
-  const selectedTarget = configuredTargets[0];
+  const selectedTarget = status.routeTargets?.[appId]?.[0];
+  const selectedEntry = entries.find(
+    (entry) => entry.targetId === selectedTarget,
+  );
+  const actionEntry = selectedEntry ?? entries[0];
+  const isCurrent = Boolean(selectedTarget);
   const totalNodes = (status.peers ?? []).filter(
     (peer) => peer.online && !peer.isBlocked,
   ).length;
 
-  const useEntry = async (entry: ProviderEntry) => {
+  const activateEntry = async (entry: ProviderEntry) => {
+    if (activateProvider.isPending || selectedTarget === entry.targetId) return;
     try {
-      await setRouteTargets.mutateAsync({
+      await activateProvider.mutateAsync({
         appType: appId,
-        targets: [entry.targetId],
+        peerId: entry.peerId,
+        providerId: entry.providerId,
       });
-      await setRoutePreference.mutateAsync("network_only");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+        queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] }),
+      ]);
       toast.success(
-        t("share.networkProvider.saved", {
-          defaultValue: "共享网络路由已更新",
+        t("share.networkProvider.enabledRestartRequired", {
+          app: getAppLabel(appId),
+          defaultValue:
+            "已启用共享网络并更新 {{app}} 配置，请重启客户端以加载新的路由。",
         }),
         { closeButton: true },
       );
@@ -141,176 +198,276 @@ export function ShareProviderRouteCard({
     }
   };
 
+  const actionPending = activateProvider.isPending;
+  const actionsDisabled = !actionEntry;
+
   return (
-    <section className="overflow-hidden rounded-xl border border-blue-500/25 bg-blue-500/5 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <Network className="h-5 w-5 shrink-0 text-blue-500" />
-          <div className="min-w-0">
-            <h3 className="font-semibold">
+    <section
+      className={cn(
+        "group relative overflow-hidden rounded-xl border border-border bg-card p-4 text-card-foreground transition-all duration-300",
+        "hover:border-emerald-500/50 hover:shadow-sm",
+        isCurrent && "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
+        dragHandleProps?.isDragging &&
+          "z-10 scale-105 cursor-grabbing border-primary shadow-lg",
+      )}
+    >
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-500/10 to-transparent transition-opacity duration-500",
+          isCurrent ? "opacity-100" : "opacity-0",
+        )}
+      />
+
+      <div className="relative flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {dragHandleProps && (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab p-1.5 active:cursor-grabbing",
+                "text-muted-foreground/50 transition-colors hover:text-muted-foreground",
+                dragHandleProps.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              title={t("provider.dragHandle")}
+              {...dragHandleProps.attributes}
+              {...dragHandleProps.listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
+
+          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-muted transition-transform duration-300 group-hover:scale-105">
+            <Network className="h-5 w-5 text-emerald-500" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="text-base font-semibold leading-none">
               {t("share.networkProvider.title", { defaultValue: "共享网络" })}
             </h3>
-            <p className="text-xs text-muted-foreground">
+            <p className="truncate text-sm text-muted-foreground">
               {t("share.networkProvider.description", {
                 app: getAppLabel(appId),
                 defaultValue:
-                  "用户模式可在本地 Provider 与网络节点提供的 {{app}} Provider 之间切换。",
+                  "从网络节点选择一个 {{app}} Provider；本地 Provider 仍可随时切换。",
               })}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant={selectedTarget ? "default" : "secondary"}>
-            {selectedTarget
-              ? t("share.networkProvider.active", { defaultValue: "正在使用" })
-              : t("share.networkProvider.waiting", { defaultValue: "请选择" })}
-          </Badge>
+
+        <div className="pointer-events-none ml-auto flex flex-shrink-0 items-center gap-1.5 opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
           <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => void refetch()}
-            disabled={isFetching}
-            aria-label={t("share.networkProvider.refresh", {
-              defaultValue: "刷新共享网络",
-            })}
+            size="sm"
+            variant={isCurrent ? "secondary" : "default"}
+            onClick={() => actionEntry && void activateEntry(actionEntry)}
+            disabled={actionsDisabled || actionPending || isCurrent}
+            className={cn(
+              "w-[4.5rem] px-2.5",
+              isCurrent
+                ? "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700"
+                : "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+            )}
           >
-            <RefreshCw
-              className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-            />
+            {actionPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isCurrent ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {isCurrent
+              ? t("provider.inUse", { defaultValue: "使用中" })
+              : t("provider.enable", { defaultValue: "启用" })}
           </Button>
+
+          <div className="flex items-center gap-1">
+            <DisabledAction
+              icon={Edit}
+              label={t("share.networkProvider.editUnavailable", {
+                defaultValue: "共享 Provider 由提供方管理，不能在本机编辑",
+              })}
+            />
+            <DisabledAction
+              icon={Copy}
+              label={t("share.networkProvider.duplicateUnavailable", {
+                defaultValue: "共享 Provider 不能复制为本地配置",
+              })}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => actionEntry && void checkEntry(actionEntry)}
+              disabled={actionsDisabled || testProvider.isPending}
+              aria-label={t("provider.connectivityCheck", {
+                defaultValue: "检测连通",
+              })}
+              title={t("provider.connectivityCheck", {
+                defaultValue: "检测连通",
+              })}
+              className="h-8 w-8 p-1"
+            >
+              {testProvider.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Activity className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onOpenShareSettings}
+              disabled={!onOpenShareSettings}
+              aria-label={t("provider.configureUsage", {
+                defaultValue: "配置用量查询",
+              })}
+              title={t("provider.configureUsage", {
+                defaultValue: "配置用量查询",
+              })}
+              className="h-8 w-8 p-1"
+            >
+              <BarChart3 className="h-4 w-4" />
+            </Button>
+            <DisabledAction
+              icon={Trash2}
+              label={t("share.networkProvider.deleteUnavailable", {
+                defaultValue: "共享 Provider 不能在本机删除",
+              })}
+            />
+          </div>
         </div>
       </div>
 
-      <div className="space-y-2 p-4">
-        {entries.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-            {t("share.networkProvider.noneAvailable", {
-              app: getAppLabel(appId),
-              defaultValue: "当前没有在线节点为 {{app}} 提供可用 Provider。",
-            })}
-          </p>
-        ) : (
-          entries.map((entry) => {
-            const active = selectedTarget === entry.targetId;
-            return (
-              <div
-                key={entry.targetId}
-                draggable
-                className="group flex items-center gap-2 rounded-lg border border-border bg-background/70 px-2 py-2 transition-colors hover:border-primary/40"
-              >
+      <div className="relative mt-4 overflow-hidden rounded-lg border border-border/70 bg-background/60">
+        <div className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2.5">
+          <div className="min-w-0">
+            <h4 className="text-sm font-medium">
+              {t("share.networkProvider.listTitle", {
+                defaultValue: "共享网络供应商",
+              })}
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              {getAppLabel(appId)} ·{" "}
+              {t("share.networkProvider.providerCount", {
+                count: entries.length,
+                defaultValue: `${entries.length} 个 Provider`,
+              })}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <span>{formatRefreshTime(dataUpdatedAt || Date.now(), t)}</span>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+              aria-label={t("share.networkProvider.refresh", {
+                defaultValue: "刷新共享 Provider",
+              })}
+              title={t("share.networkProvider.refresh", {
+                defaultValue: "刷新共享 Provider",
+              })}
+              className="h-8 w-8"
+            >
+              <RefreshCw
+                className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+              />
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-1 p-2">
+          {entries.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+              {t("share.networkProvider.noneAvailable", {
+                app: getAppLabel(appId),
+                defaultValue: "当前没有在线节点为 {{app}} 提供可用 Provider。",
+              })}
+            </p>
+          ) : (
+            entries.map((entry) => {
+              const active = selectedTarget === entry.targetId;
+              const displayModel =
+                entry.defaultModel ??
+                entry.models[0] ??
+                t("share.networkProvider.modelsUnknown", {
+                  defaultValue: "模型信息待刷新",
+                });
+              const coverage = entry.models.reduce(
+                (max, model) => Math.max(max, entry.coverage[model] ?? 0),
+                0,
+              );
+              return (
                 <div
-                  className="flex h-10 w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground active:cursor-grabbing"
-                  title={t("share.networkProvider.dragHint", {
-                    defaultValue: "拖动调整共享 Provider 顺序",
-                  })}
-                  aria-label={t("share.networkProvider.dragHint", {
-                    defaultValue: "拖动调整共享 Provider 顺序",
-                  })}
+                  key={entry.targetId}
+                  className="rounded-md px-2 py-2 transition-colors hover:bg-muted/40"
                 >
-                  <GripVertical className="h-4 w-4" />
-                </div>
-                <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
-                  <input
-                    type="radio"
-                    name={`share-provider-${appId}`}
-                    checked={active}
-                    onChange={() => void useEntry(entry)}
-                    className="mt-1 h-4 w-4 accent-primary"
-                    aria-label={`${entry.name} ${entry.models.join(", ")}`}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {entry.name}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {entry.models.length > 0
-                        ? entry.models.join(" · ")
-                        : t("share.networkProvider.modelsUnknown", {
-                            defaultValue: "模型信息待刷新",
-                          })}
-                    </span>
-                  </span>
-                </label>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 text-right text-[10px] text-muted-foreground sm:text-[11px]">
-                  <span>
-                    {t("share.networkProvider.total", {
-                      defaultValue: "总: 0",
-                    })}
-                  </span>
-                  <span aria-hidden="true">|</span>
-                  <span>
-                    {t("share.networkProvider.used", {
-                      defaultValue: "已使用: 0",
-                    })}
-                  </span>
-                  <span aria-hidden="true">|</span>
-                  <span>
-                    {entry.models.length > 0
-                      ? `${entry.coverage[entry.models[0]] ?? 0}/${totalNodes}`
-                      : `0/${totalNodes}`}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                  <Button
-                    size="sm"
-                    variant={active ? "default" : "ghost"}
-                    onClick={() => void useEntry(entry)}
-                    disabled={
-                      setRouteTargets.isPending || setRoutePreference.isPending
-                    }
-                  >
-                    {t("share.networkProvider.use", { defaultValue: "使用" })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void checkEntry(entry)}
-                    disabled={testProvider.isPending}
-                  >
-                    {testProvider.isPending ? (
-                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Activity className="mr-1 h-3.5 w-3.5" />
-                    )}
-                    {t("share.networkProvider.check", {
-                      defaultValue: "检测连通",
-                    })}
-                  </Button>
-                  {onOpenShareSettings && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={onOpenShareSettings}
+                  <div className="flex items-center gap-3">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        name={`share-provider-${appId}`}
+                        checked={active}
+                        onChange={() => void activateEntry(entry)}
+                        disabled={activateProvider.isPending}
+                        className="mt-1 h-4 w-4 accent-primary"
+                        aria-label={`${entry.name} ${displayModel}`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">
+                          {entry.name}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {displayModel}
+                        </span>
+                      </span>
+                    </label>
+                    <div className="flex shrink-0 items-center gap-x-2 text-right text-[10px] text-muted-foreground sm:text-[11px]">
+                      <span>
+                        {t("share.networkProvider.total", {
+                          defaultValue: "总: 0",
+                        })}
+                      </span>
+                      <span aria-hidden="true">|</span>
+                      <span>
+                        {t("share.networkProvider.used", {
+                          defaultValue: "已使用: 0",
+                        })}
+                      </span>
+                      <span aria-hidden="true">|</span>
+                      <span>
+                        {coverage}/{totalNodes}
+                      </span>
+                    </div>
+                  </div>
+                  {lastCheck?.target === entry.targetId && (
+                    <span
+                      role="status"
+                      className={cn(
+                        "ml-6 mt-1 block max-w-full truncate text-xs",
+                        lastCheck.success
+                          ? "text-emerald-600"
+                          : "text-destructive",
+                      )}
+                      title={lastCheck.message}
                     >
-                      <BarChart3 className="mr-1 h-3.5 w-3.5" />
-                      {t("share.networkProvider.usage", {
-                        defaultValue: "查看用量",
-                      })}
-                    </Button>
+                      {lastCheck.message}
+                    </span>
                   )}
                 </div>
-                {lastCheck?.target === entry.targetId && (
-                  <span
-                    className={`hidden max-w-48 truncate text-xs md:block ${lastCheck.success ? "text-emerald-600" : "text-destructive"}`}
-                    title={lastCheck.message}
-                  >
-                    {lastCheck.message}
-                  </span>
-                )}
-              </div>
-            );
-          })
-        )}
-        {(!isProxyRunning || !isProxyTakeover || !status.bridgeRunning) && (
-          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-            {t("share.networkProvider.proxyRequired", {
-              app: getAppLabel(appId),
-              defaultValue:
-                "请先开启 {{app}} 的本地路由接管，共享网络请求才会生效。",
-            })}
-          </p>
-        )}
+              );
+            })
+          )}
+        </div>
       </div>
+
+      {(!isProxyRunning || !isProxyTakeover) && isCurrent && (
+        <p className="relative mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          {t("share.networkProvider.proxyStarting", {
+            app: getAppLabel(appId),
+            defaultValue:
+              "正在为 {{app}} 启用本地路由接管；请等待状态刷新后重启客户端。",
+          })}
+        </p>
+      )}
     </section>
   );
 }

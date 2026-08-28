@@ -1265,6 +1265,35 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Recursively sanitize JSON Schema nodes containing `$ref` for strict Chat
+/// Completions providers such as Moonshot/Kimi.
+///
+/// Codex tools may use JSON Schema 2020-12, where `$ref` can have sibling
+/// keywords. Moonshot validates its "flavored JSON schema" with older `$ref`
+/// semantics and rejects nodes such as `{ "$ref": "...", "type": "..." }`.
+/// Keeping the reference and dropping its siblings matches those older
+/// semantics; the referenced `$defs` entry remains the source of the type and
+/// constraints.
+fn sanitize_schema_ref_siblings(value: &mut Value) {
+    match value {
+        Value::Object(obj) => {
+            if obj.contains_key("$ref") && obj.len() > 1 {
+                obj.retain(|key, _| key == "$ref");
+                return;
+            }
+            for nested in obj.values_mut() {
+                sanitize_schema_ref_siblings(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_schema_ref_siblings(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
 ///
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
@@ -1274,6 +1303,7 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
+    sanitize_schema_ref_siblings(&mut params);
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
@@ -2442,6 +2472,52 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_moonshot_ref_siblings() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "exec_cmd",
+                "description": "Execute command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "$ref": "#/$defs/Mode",
+                            "type": "string",
+                            "description": "which mode"
+                        }
+                    },
+                    "$defs": {
+                        "Mode": {
+                            "type": "string",
+                            "enum": ["a", "b"]
+                        },
+                        "__schema20": {
+                            "$ref": "#/$defs/Mode",
+                            "type": "string"
+                        }
+                    }
+                }
+            }],
+            "input": "test"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(
+            parameters["properties"]["mode"],
+            json!({"$ref": "#/$defs/Mode"})
+        );
+        assert_eq!(
+            parameters["$defs"]["__schema20"],
+            json!({"$ref": "#/$defs/Mode"})
+        );
+        assert_eq!(parameters["$defs"]["Mode"]["type"], "string");
     }
 
     #[test]

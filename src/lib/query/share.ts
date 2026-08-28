@@ -145,6 +145,20 @@ export function useSetRouteTargets() {
   );
 }
 
+export function useActivateSharedProvider() {
+  return useShareMutation(
+    ({
+      appType,
+      peerId,
+      providerId,
+    }: {
+      appType: string;
+      peerId: string;
+      providerId: string;
+    }) => shareApi.activateProvider(appType, peerId, providerId),
+  );
+}
+
 export function useTestSharedProvider() {
   return useMutation<
     ShareProviderCheckResult,

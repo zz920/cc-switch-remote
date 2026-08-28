@@ -1149,10 +1149,6 @@ function App() {
                         setSettingsDefaultTab("share");
                         setCurrentView("settings");
                       }}
-                      onOpenRoutingSettings={() => {
-                        setSettingsDefaultTab("proxy");
-                        setCurrentView("settings");
-                      }}
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel

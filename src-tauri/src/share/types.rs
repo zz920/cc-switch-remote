@@ -47,14 +47,14 @@ pub enum RoutePreference {
 }
 
 /// 本节点在共享网络中的数据面角色。
-/// Provider 只提供本机供应商，Consumer 只消费其他节点供应商。
+/// Provider 只提供本机供应商；Consumer 可在每个 Agent 内选择本地或网络供应商。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ShareMode {
     /// 作为供应商，接收其他节点请求并通过本机路由转发。
     #[default]
     Provider,
-    /// 作为用户，只把请求发往其他节点，不使用本机 Provider。
+    /// 作为用户，可按 Agent 在本机 Provider 与网络 Provider 之间切换。
     Consumer,
 }
 
@@ -108,6 +108,9 @@ pub struct ShareProviderInfo {
     pub name: String,
     /// 该 Provider 声明的可用模型
     pub models: Vec<String>,
+    /// Provider 当前配置的默认模型。旧节点未通告时为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 }
 
 /// 共享 Provider 的连通性检查结果（由出借方执行探测，不发送实际模型请求）。
@@ -175,7 +178,7 @@ pub struct ShareNetworkStatus {
     pub route_preference: String,
     /// 本节点角色：provider / consumer。
     pub mode: String,
-    /// 消费侧按应用选择的远端 Provider target。缺少某应用键表示全部可用 Provider。
+    /// 消费侧按应用选择的远端 Provider target。缺少某应用键表示使用本地 Provider。
     pub route_targets: HashMap<String, Vec<String>>,
     pub node_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,4 +235,22 @@ pub struct ShareQuotaConfig {
     pub max_tokens: i64,
     /// 是否按 peer 分别限额
     pub per_peer: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_info_accepts_legacy_capability_without_default_model() {
+        let info: ShareProviderInfo = serde_json::from_value(serde_json::json!({
+            "app": "codex",
+            "providerId": "kimi",
+            "name": "Kimi",
+            "models": ["kimi-k2.5"]
+        }))
+        .expect("legacy provider capability should remain compatible");
+
+        assert_eq!(info.default_model, None);
+    }
 }

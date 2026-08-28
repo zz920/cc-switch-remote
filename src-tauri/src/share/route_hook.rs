@@ -1,7 +1,8 @@
 //! 组网路由钩子：消费侧远端注入 / 出借侧白名单过滤
 //!
 //! 消费侧：把在线的远端节点合成为普通 Provider（base_url 指向本机桥接
-//! `http://127.0.0.1:{bridge}/peer/{peer_id}`），按路由偏好与本地路由合并，
+//! `http://127.0.0.1:{bridge}/peer/{peer_id}`）。每个 Agent 通过是否设置
+//! selected target 在本地 Provider 与共享 Provider 之间互斥切换，
 //! 熔断/故障转移/协议转换全部复用现有 forwarder。
 //!
 //! 出借侧：把白名单内的本机供应商克隆为按 peer 归因的合成 Provider
@@ -13,6 +14,7 @@ use crate::proxy::provider_router::RouteHook;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
+use toml_edit::{value, DocumentMut, Item, Table};
 
 use super::types::{RoutePreference, ShareProviderInfo};
 use std::collections::HashMap;
@@ -24,7 +26,8 @@ pub struct RemoteRouteTable {
     pub bridge_port: u16,
     /// 远端节点路由项
     pub remotes: Vec<RemotePeerRoute>,
-    /// 按 app 保存的 target 选择。缺少 app 键表示该 app 使用全部远端 Provider。
+    /// 按 app 保存的 target 选择。非空表示该 app 已启用共享 Provider；
+    /// 缺少 app 键或空集合表示继续使用本地 Provider。
     pub selected_targets: HashMap<String, std::collections::HashSet<String>>,
 }
 
@@ -128,11 +131,36 @@ pub fn synthetic_remote_provider_for_provider(
                 "ANTHROPIC_AUTH_TOKEN": "tokentap",
             }
         }),
-        "codex" => json!({
-            "auth": { "OPENAI_API_KEY": "tokentap" },
-            "config": "",
-            "base_url": base_url,
-        }),
+        "codex" => {
+            // Codex 启动时会直接读取 model/model_provider。共享路由不能沿用
+            // 当前本地 Provider 的这两个字段，否则选择 Kimi/智谱等远端
+            // Provider 后客户端仍会携带旧模型启动并立即报错。
+            let default_model = provider
+                .default_model
+                .as_deref()
+                .or_else(|| provider.models.first().map(String::as_str));
+            let mut document = DocumentMut::new();
+            document["model_provider"] = value("tokentap_shared");
+            if let Some(model) = default_model {
+                document["model"] = value(model);
+            }
+            let mut provider_table = Table::new();
+            provider_table["name"] = value(provider.name.clone());
+            provider_table["base_url"] = value(base_url.clone());
+            provider_table["wire_api"] = value("responses");
+            let mut providers_table = Table::new();
+            providers_table.insert("tokentap_shared", Item::Table(provider_table));
+            document["model_providers"] = Item::Table(providers_table);
+
+            json!({
+                "auth": { "OPENAI_API_KEY": "tokentap" },
+                "config": document.to_string(),
+                "base_url": base_url,
+                "modelCatalog": {
+                    "models": provider.models.iter().map(|model| json!({ "model": model })).collect::<Vec<_>>()
+                },
+            })
+        }
         "gemini" => json!({
             "env": {
                 "GOOGLE_GEMINI_BASE_URL": base_url,
@@ -159,7 +187,7 @@ pub fn synthetic_remote_provider_for_provider(
     result
 }
 
-/// 消费侧路由钩子：把远端节点按偏好合并进路由列表
+/// 消费侧路由钩子：按 Agent 的 target 选择本地或共享 Provider。
 pub struct ConsumerRouteHook {
     table: Arc<RwLock<RemoteRouteTable>>,
 }
@@ -172,24 +200,27 @@ impl ConsumerRouteHook {
 
 impl RouteHook for ConsumerRouteHook {
     fn post_select(&self, app_type: &str, selected: Vec<Provider>) -> Vec<Provider> {
-        let (preference, bridge_port, remotes, selected_targets) = {
+        let (bridge_port, remotes, selected_targets) = {
             let snap = match self.table.read() {
                 Ok(s) => s,
                 Err(_) => return selected,
             };
             (
-                snap.preference,
                 snap.bridge_port,
                 snap.remotes.clone(),
-                snap.selected_targets.clone(),
+                snap.selected_targets.get(app_type).cloned(),
             )
         };
 
-        if remotes.is_empty() || preference == RoutePreference::LocalOnly {
+        let Some(selection) = selected_targets.filter(|targets| !targets.is_empty()) else {
             return selected;
+        };
+        // 已选择共享 Provider 时，节点离线必须明确失败，不能静默回落到
+        // 本地 Provider，否则界面展示与实际计费/路由对象会不一致。
+        if remotes.is_empty() {
+            return Vec::new();
         }
 
-        let selection = selected_targets.get(app_type);
         let remote_providers: Vec<Provider> = remotes
             .iter()
             .flat_map(|remote| {
@@ -198,10 +229,8 @@ impl RouteHook for ConsumerRouteHook {
                     .iter()
                     .filter(|provider| provider.app == app_type)
                     .filter(|provider| {
-                        selection.map_or(true, |targets| {
-                            targets
-                                .contains(&remote_target_id(&remote.peer_id, &provider.provider_id))
-                        })
+                        selection
+                            .contains(&remote_target_id(&remote.peer_id, &provider.provider_id))
                     })
                     .map(|provider| {
                         synthetic_remote_provider_for_provider(
@@ -229,20 +258,7 @@ impl RouteHook for ConsumerRouteHook {
             })
             .collect();
 
-        match preference {
-            RoutePreference::LocalOnly => selected,
-            RoutePreference::LocalFirst => {
-                let mut out = selected;
-                out.extend(remote_providers);
-                out
-            }
-            RoutePreference::NetworkFirst => {
-                let mut out = remote_providers;
-                out.extend(selected);
-                out
-            }
-            RoutePreference::NetworkOnly => remote_providers,
-        }
+        remote_providers
     }
 }
 
@@ -337,35 +353,42 @@ mod tests {
     }
 
     #[test]
-    fn consumer_hook_respects_preference() {
+    fn consumer_hook_routes_each_app_by_selected_target() {
         let local = Provider::with_id("local".to_string(), "本地".to_string(), json!({}), None);
         let table = Arc::new(RwLock::new(table_with(
             RoutePreference::NetworkFirst,
             vec![claude_remote("peer-a")],
         )));
         let hook = ConsumerRouteHook::new(table.clone());
+        // 旧版全局偏好不再控制实际路由；未选择共享 target 时继续走本地。
         let out = hook.post_select("claude", vec![local.clone()]);
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].id, "share:peer-a");
-        assert_eq!(out[1].id, "local");
-
-        table.write().unwrap().preference = RoutePreference::LocalFirst;
-        let out = hook.post_select("claude", vec![local.clone()]);
+        assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "local");
 
-        table.write().unwrap().preference = RoutePreference::NetworkOnly;
+        table.write().unwrap().selected_targets.insert(
+            "claude".to_string(),
+            HashSet::from([remote_target_id("peer-a", "legacy")]),
+        );
         let out = hook.post_select("claude", vec![local.clone()]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "share:peer-a");
 
-        // 不共享 codex 的节点不应出现在 codex 路由中
+        // Claude 的选择不会连带改变 Codex。
         let out = hook.post_select("codex", vec![local.clone()]);
-        assert!(out.is_empty());
-
-        table.write().unwrap().preference = RoutePreference::LocalOnly;
-        let out = hook.post_select("claude", vec![local.clone()]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "local");
+    }
+
+    #[test]
+    fn selected_shared_target_does_not_fallback_to_local_when_peer_is_offline() {
+        let local = Provider::with_id("local".to_string(), "本地".to_string(), json!({}), None);
+        let mut table = table_with(RoutePreference::LocalOnly, Vec::new());
+        table.selected_targets.insert(
+            "codex".to_string(),
+            HashSet::from([remote_target_id("peer-a", "kimi")]),
+        );
+        let hook = ConsumerRouteHook::new(Arc::new(RwLock::new(table)));
+        assert!(hook.post_select("codex", vec![local]).is_empty());
     }
 
     #[test]
@@ -397,12 +420,14 @@ mod tests {
                     provider_id: "zhipu".to_string(),
                     name: "智谱".to_string(),
                     models: vec!["glm-4".to_string()],
+                    default_model: Some("glm-4".to_string()),
                 },
                 ShareProviderInfo {
                     app: "codex".to_string(),
                     provider_id: "kimi".to_string(),
                     name: "Kimi".to_string(),
                     models: vec!["moonshot-v1".to_string()],
+                    default_model: Some("moonshot-v1".to_string()),
                 },
             ],
         };
@@ -419,6 +444,10 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "share:peer-a:kimi");
         assert!(out[0].name.contains("Kimi"));
+        let config = out[0].settings_config["config"].as_str().unwrap();
+        assert!(config.contains("model = \"moonshot-v1\""));
+        assert!(config.contains("model_provider = \"tokentap_shared\""));
+        assert!(config.contains("wire_api = \"responses\""));
     }
 
     #[test]

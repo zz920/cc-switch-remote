@@ -1731,6 +1731,7 @@ pub fn run() {
             commands::share_set_route_preference,
             commands::share_set_route_mode,
             commands::share_set_route_targets,
+            commands::share_activate_provider,
             commands::share_test_provider,
             commands::share_set_relay_addr,
             commands::share_set_node_name,
