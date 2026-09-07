@@ -1801,14 +1801,34 @@ impl CodexOAuthManager {
             .resolve_default_account_id()
             .await
             .or_else(|| Some(account_id.clone()));
-        let store = CodexOAuthStore {
-            version: 2,
-            accounts: persisted_accounts,
+        // fork 的 keyring 架构：密钥进系统凭据库，盘上只落元数据。
+        // （上游 v3.20.1 此处直接写全量账号 JSON，会把 refresh/id token
+        //  明文留在磁盘上，违背本 fork 的存储边界，故改写为 V2 元数据流。）
+        self.save_account_secrets(&data)?;
+        let previous_store = self.read_v2_store_sync();
+        let store = CodexOAuthStoreV2 {
+            version: CODEX_OAUTH_STORE_VERSION,
+            accounts: persisted_accounts
+                .iter()
+                .map(|(id, account)| (id.clone(), CodexAccountMetadata::from(account)))
+                .collect(),
             default_account_id: persisted_default,
         };
         let content = serde_json::to_string_pretty(&store)
             .map_err(|error| CodexOAuthError::ParseError(error.to_string()))?;
         self.write_store_atomic(&content)?;
+        if let Some(previous) = previous_store {
+            if let Some(old_metadata) = previous.accounts.get(&account_id) {
+                if old_metadata.token_updated_at_ms != data.token_updated_at_ms {
+                    if let Err(error) = self.delete_account_secrets(
+                        &old_metadata.account_id,
+                        old_metadata.token_updated_at_ms,
+                    ) {
+                        log::warn!("[CodexOAuth] 清理旧代系统凭据失败: {error}");
+                    }
+                }
+            }
+        }
 
         {
             let mut accounts = self.accounts.write().await;
@@ -2340,7 +2360,8 @@ impl CodexOAuthManager {
             accounts: accounts
                 .iter()
                 .map(|(id, account)| (id.clone(), CodexAccountMetadata::from(account)))
-                .collect(),            default_account_id: default,
+                .collect(),
+            default_account_id: default,
         };
 
         let content = serde_json::to_string_pretty(&store)
@@ -3149,7 +3170,8 @@ mod tests {
         assert_eq!(
             secrets.values().cloned().collect::<Vec<_>>(),
             vec!["rt2".to_string()]
-        );    }
+        );
+    }
 
     #[tokio::test]
     async fn adopt_account_refresh_token_syncs_rotated_value() {
