@@ -5544,9 +5544,10 @@ mod tests {
 
         let result = SkillService::migrate_storage(&db, SkillStorageLocation::CcSwitch)
             .expect("migrate away from alias");
+        // 本 fork 的应用目录已品牌迁移为 .tokentap（上游测试硬编码 .cc-switch）
         let new_source = temp
             .path()
-            .join(".cc-switch")
+            .join(".tokentap")
             .join("skills")
             .join("test-skill");
         let pi_skill = temp
