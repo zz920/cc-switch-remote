@@ -1,9 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TokenTap",
-  "version": "3.20.0",
-  "identifier": "com.tokentap.app",
-  "build": {
+  "version": "3.20.1",
+  "identifier": "com.tokentap.app",  "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm run dev:renderer",
