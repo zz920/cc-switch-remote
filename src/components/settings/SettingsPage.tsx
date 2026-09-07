@@ -347,7 +347,7 @@ export function SettingsPage({
                   transition={{ duration: 0.3 }}
                   className="space-y-6"
                 >
-                  <ShareSettingsTab />
+                  <ShareSettingsTab onGoToAuth={() => setActiveTab("auth")} />
                 </motion.div>
               </TabsContent>
 

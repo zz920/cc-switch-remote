@@ -62,9 +62,16 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CapturedHeaders {
+        authorization: String,
+        tokentap_auth: String,
+        consumer_credentials: Vec<String>,
+    }
+
     /// 启动模拟上游，返回 (地址, 捕获的请求头)
-    async fn start_mock_upstream() -> (String, Arc<Mutex<Vec<(String, String)>>>) {
-        let captured: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    async fn start_mock_upstream() -> (String, Arc<Mutex<Vec<CapturedHeaders>>>) {
+        let captured: Arc<Mutex<Vec<CapturedHeaders>>> = Arc::new(Mutex::new(Vec::new()));
         let captured2 = captured.clone();
         let app = axum::Router::new().route(
             "/v1/messages",
@@ -77,16 +84,35 @@ mod tests {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
-                    let junk = req
+                    let tokentap_auth = req
                         .headers()
                         .get("x-tokentap-auth")
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
-                    captured
-                        .lock()
-                        .unwrap()
-                        .push((auth, format!("tokentap:{junk}")));
+                    let consumer_credentials = [
+                        "proxy-authorization",
+                        "cookie",
+                        "api-key",
+                        "x-api-key",
+                        "x-goog-api-key",
+                        "chatgpt-account-id",
+                        "openai-organization",
+                        "openai-project",
+                    ]
+                    .into_iter()
+                    .filter_map(|name| {
+                        req.headers()
+                            .get(name)
+                            .and_then(|value| value.to_str().ok())
+                            .map(|value| format!("{name}:{value}"))
+                    })
+                    .collect();
+                    captured.lock().unwrap().push(CapturedHeaders {
+                        authorization: auth,
+                        tokentap_auth,
+                        consumer_credentials,
+                    });
                     axum::Json(json!({
                         "id": "msg_mock",
                         "type": "message",
@@ -132,10 +158,15 @@ mod tests {
     struct LendFixture {
         db: Arc<Database>,
         router: axum::Router,
-        captured: Arc<Mutex<Vec<(String, String)>>>,
+        captured: Arc<Mutex<Vec<CapturedHeaders>>>,
+        _oauth_dir: tempfile::TempDir,
     }
 
     async fn lend_fixture(whitelist: HashSet<String>, quota: ShareQuotaConfig) -> LendFixture {
+        // The desktop runtime installs the ring provider during app setup. These
+        // router-level tests bypass that setup, so mirror it before reqwest
+        // constructs a rustls client in the forwarding path.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let db = Arc::new(Database::memory().unwrap());
         let (mock_addr, captured) = start_mock_upstream().await;
         let provider = Provider::with_id(
@@ -152,7 +183,13 @@ mod tests {
         db.save_provider("claude", &provider).unwrap();
 
         let whitelist = Arc::new(RwLock::new(whitelist));
-        let state = build_lend_state(db.clone(), PEER, whitelist.clone()).await;
+        let oauth_dir = tempfile::TempDir::new().unwrap();
+        let oauth_manager = Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                oauth_dir.path().to_path_buf(),
+            ),
+        );
+        let state = build_lend_state(db.clone(), PEER, whitelist.clone(), None).await;
         let ctx = AdmissionCtx::new(
             db.clone(),
             PEER.to_string(),
@@ -160,11 +197,13 @@ mod tests {
             Arc::new(AsyncRwLock::new(quota)),
             whitelist,
             "出借方测试机".to_string(),
+            oauth_manager,
         );
         LendFixture {
             db,
             router: build_lend_router(state, ctx),
             captured,
+            _oauth_dir: oauth_dir,
         }
     }
 
@@ -195,12 +234,27 @@ mod tests {
         let fx = lend_fixture(whitelist_third(), unlimited_quota()).await;
 
         // 消费方请求（自带一个无关的 authorization，必须被忽略）
-        let req = signed_request(
+        let mut req = signed_request(
             SHARE_KEY,
             "/v1/messages",
             &chat_body(),
             Some("Bearer consumer-junk-token"),
         );
+        for (name, value) in [
+            ("proxy-authorization", "Basic consumer-proxy-secret"),
+            ("cookie", "consumer_session=secret"),
+            ("api-key", "consumer-api-key"),
+            ("x-api-key", "consumer-x-api-key"),
+            ("x-goog-api-key", "consumer-google-key"),
+            ("chatgpt-account-id", "consumer-account"),
+            ("openai-organization", "consumer-org"),
+            ("openai-project", "consumer-project"),
+        ] {
+            req.headers_mut().insert(
+                http::HeaderName::from_static(name),
+                http::HeaderValue::from_static(value),
+            );
+        }
         let resp = fx.router.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
@@ -212,8 +266,13 @@ mod tests {
         // 出站身份模型：上游收到的是出借方 key，且组网头不外泄
         let captured = fx.captured.lock().unwrap();
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].0, "Bearer lender-real-secret-key");
-        assert_eq!(captured[0].1, "tokentap:");
+        assert_eq!(captured[0].authorization, "Bearer lender-real-secret-key");
+        assert_eq!(captured[0].tokentap_auth, "");
+        assert!(
+            captured[0].consumer_credentials.is_empty(),
+            "消费方认证/账号头不应到达上游: {:?}",
+            captured[0].consumer_credentials
+        );
 
         // 用量归因：proxy_request_logs 按 sharelend:<peer>:third 落账
         let used = fx.db.share_peer_tokens_used(PEER, 0).unwrap();

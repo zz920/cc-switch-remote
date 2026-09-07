@@ -30,8 +30,9 @@ pub async fn share_create_network(
 pub async fn share_request_join(
     state: tauri::State<'_, AppState>,
     share_id: String,
+    relay_addr: Option<String>,
 ) -> Result<RequestJoinResult, String> {
-    state.share_manager.request_join(share_id).await
+    state.share_manager.request_join(share_id, relay_addr).await
 }
 
 /// 取消等待中的加入申请

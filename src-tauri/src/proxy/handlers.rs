@@ -362,7 +362,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
     .await;
 }
 
-fn spawn_claude_usage_log(
+async fn record_claude_usage_log(
     state: &ProxyState,
     ctx: &RequestContext,
     response: &Value,
@@ -375,10 +375,7 @@ fn spawn_claude_usage_log(
     let Some(log) = prepare_claude_usage_log(ctx, response, status_code, is_streaming) else {
         return;
     };
-    let state = state.clone();
-    tokio::spawn(async move {
-        write_claude_usage_log(&state, log).await;
-    });
+    write_claude_usage_log(state, log).await;
 }
 
 async fn handle_claude_transform(
@@ -673,7 +670,9 @@ async fn handle_claude_transform(
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
-    spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+    // The non-streaming response is already fully buffered. Persist its usage before
+    // returning so peer quotas and attribution include this request immediately.
+    record_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false).await;
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -949,6 +948,33 @@ async fn handle_responses_for_app(
         )
         .await;
     }
+
+    // OpenAI Codex 后端在安全缓冲（响应头 x-codex-safety-buffering-enabled）等
+    // 场景会把 stream:true 的 SSE 结果整包返回且不带 Content-Type（与 Claude 侧
+    // #2234 的"未标记 SSE 体"同源）。is_sse() 因此判否，本机与共享下游都会按
+    // 非流式处理：usage 解析失败记 0 token（共享双方 Token 统计全为 0 的根因），
+    // 客户端也拿不到 text/event-stream。请求明确要求流式且上游成功、却又完全
+    // 没给 Content-Type 时，重打 SSE 头交还既有流式管线——事件解析、usage
+    // 提取、透传语义全部复用。上游显式标注 JSON 的场合尊重原值，不做重打。
+    let response =
+        if is_stream && response.status().is_success() && response.content_type().is_none() {
+            let status = response.status();
+            let mut headers = response.headers().clone();
+            headers.insert(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            );
+            // 缓冲体自带的实体头与流式转发冲突（hyper 会自行分帧），必须摘除。
+            headers.remove(axum::http::header::CONTENT_LENGTH);
+            headers.remove(axum::http::header::CONTENT_ENCODING);
+            log::info!(
+                "[{}] 上游对 stream 请求返回未标记 Content-Type 的缓冲体，按 SSE 透传",
+                ctx.tag
+            );
+            super::hyper_client::ProxyResponse::streamed(status, headers, response.bytes_stream())
+        } else {
+            response
+        };
 
     process_response(
         response,

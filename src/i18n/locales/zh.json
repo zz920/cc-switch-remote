@@ -3292,9 +3292,10 @@
       "usage": "查看用量",
       "refresh": "刷新共享 Provider",
       "saved": "共享 Provider 路由已更新",
-        "localHidden": "用户模式下，本地 Provider 与共享网络 Provider 均可作为当前路由。",
+      "localHidden": "用户模式下，本地 Provider 与共享网络 Provider 均可作为当前路由。",
       "proxyRequired": "共享 Provider 已选择，但 {{app}} 需要先开启本地路由接管，请求才会经过共享网络。",
-      "openRouting": "配置路由"
+      "openRouting": "配置路由",
+      "managedOauthModel": "ChatGPT 账号动态模型"
     },
     "status": {
       "connected": "已连接",
@@ -3312,6 +3313,9 @@
       "shareIdLabel": "网络 ID",
       "shareIdPlaceholder": "网络 ID 或 tokentap://join?id= 链接",
       "shareIdDescription": "支持直接粘贴完整邀请链接，将自动提取网络 ID。",
+      "relayAddrLabel": "Relay 地址",
+      "relayAddrPlaceholder": "例如 /ip4/192.168.1.100/tcp/15720/p2p/...",
+      "relayAddrDescription": "首次加入前可在此配置 Relay；地址会保存并用于后续连接。若已有内置或已保存的 Relay，可留空。",
       "invalidShareId": "请输入有效的网络 ID",
       "submit": "申请加入",
       "pendingTitle": "等待管理员审批",
@@ -3393,7 +3397,7 @@
       "confirmMessage": "确定要退出共享网络吗？退出后将无法使用网络成员共享的资源。"
     },
     "settings": {
-      "notJoinedHint": "尚未加入共享网络。可在「路由」面板的共享网络区创建或加入网络；下方配置将在加入后生效。",
+      "notJoinedHint": "尚未加入共享网络。可先配置 Relay，再从共享网络区创建或加入网络；其他配置将在加入后生效。",
       "keyFileWarningTitle": "密钥存储风险",
       "keyFileWarning": "密钥未存入系统钥匙串，安全性较低。建议排查系统钥匙串可用性。",
       "nodeName": {
@@ -3404,15 +3408,19 @@
       "relay": {
         "title": "Relay 地址",
         "description": "无法直连时用于中转流量的 relay 服务器地址。",
-        "placeholder": "留空使用官方 relay",
+        "placeholder": "输入 Relay multiaddr；留空使用已配置的默认值",
         "resetDefault": "恢复默认"
       },
       "sharedProviders": {
         "title": "我共享的供应商",
         "description": "选择要出借给网络成员的供应商，默认全部不共享。",
         "empty": "该应用下暂无供应商",
-        "officialNotAllowed": "官方供应商不可共享",
-        "officialBadge": "不可共享"
+        "officialNotAllowed": "仅显式绑定本机 Codex OAuth 账号的 OpenAI Official 供应商可以共享",
+        "officialBadge": "不可共享",
+        "bindAndShare": "绑定并共享",
+        "goLogin": "去登录 ChatGPT 账号",
+        "binding": "绑定中…",
+        "bindSuccess": "已绑定账号 {{account}} 并勾选共享，请点击保存生效"
       }
     },
     "dangerZone": {

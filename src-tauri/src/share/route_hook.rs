@@ -135,10 +135,18 @@ pub fn synthetic_remote_provider_for_provider(
             // Codex 启动时会直接读取 model/model_provider。共享路由不能沿用
             // 当前本地 Provider 的这两个字段，否则选择 Kimi/智谱等远端
             // Provider 后客户端仍会携带旧模型启动并立即报错。
-            let default_model = provider
-                .default_model
-                .as_deref()
-                .or_else(|| provider.models.first().map(String::as_str));
+            // 托管 OAuth（OpenAI Official）例外：不写 model，让消费方 Codex
+            // CLI 使用它自己的默认模型——模型由账号与 CLI 版本动态决定，写死
+            // 任何通告值都会在 Codex 升级引入新模型（如 GPT-6）后过时。
+            let managed_oauth = provider.auth_mode.as_deref() == Some("managed_oauth");
+            let default_model = if managed_oauth {
+                None
+            } else {
+                provider
+                    .default_model
+                    .as_deref()
+                    .or_else(|| provider.models.first().map(String::as_str))
+            };
             let mut document = DocumentMut::new();
             document["model_provider"] = value("tokentap_shared");
             if let Some(model) = default_model {
@@ -320,8 +328,11 @@ impl LenderRouteHook {
             .filter(|p| whitelist.contains(&format!("{app_type}:{}", p.id)))
             // 请求指定了共享 Provider 时，只允许该 Provider 参与路由。
             .filter(|p| target.map_or(true, |target_id| target_id == p.id))
-            // 官方/托管类供应商（OAuth 绑定本机）不可外借
-            .filter(|p| p.category.as_deref() != Some("official"))
+            // Official 仅允许显式绑定本机 Codex OAuth 账号的安全子集。
+            .filter(|p| {
+                super::official::is_structurally_shareable(app_type, p)
+                    && (p.category.as_deref() != Some("official") || target.is_some())
+            })
             .map(|mut p| {
                 p.id = lend_provider_id(&self.peer_id, &p.id);
                 p
@@ -421,6 +432,7 @@ mod tests {
                     name: "智谱".to_string(),
                     models: vec!["glm-4".to_string()],
                     default_model: Some("glm-4".to_string()),
+                    auth_mode: None,
                 },
                 ShareProviderInfo {
                     app: "codex".to_string(),
@@ -428,6 +440,7 @@ mod tests {
                     name: "Kimi".to_string(),
                     models: vec!["moonshot-v1".to_string()],
                     default_model: Some("moonshot-v1".to_string()),
+                    auth_mode: None,
                 },
             ],
         };

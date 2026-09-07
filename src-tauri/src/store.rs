@@ -26,7 +26,7 @@ impl AppState {
             ProxyService::new_with_codex_oauth_manager(db.clone(), codex_oauth_manager.clone());
 
         Self {
-            share_manager: ShareManager::new(db.clone()),
+            share_manager: ShareManager::new(db.clone(), codex_oauth_manager.clone()),
             db,
             proxy_service,
             usage_cache: Arc::new(UsageCache::new()),

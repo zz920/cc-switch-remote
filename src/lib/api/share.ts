@@ -18,8 +18,14 @@ export const shareApi = {
   },
 
   /** 发起加入（返回 6 位短码，等待出借方审批） */
-  async requestJoin(shareId: string): Promise<RequestJoinResult> {
-    return invoke("share_request_join", { shareId });
+  async requestJoin(
+    shareId: string,
+    relayAddr?: string,
+  ): Promise<RequestJoinResult> {
+    return invoke("share_request_join", {
+      shareId,
+      relayAddr: relayAddr ?? null,
+    });
   },
 
   /** 取消等待中的加入申请 */

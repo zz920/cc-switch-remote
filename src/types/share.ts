@@ -8,6 +8,8 @@ export interface ShareProviderInfo {
   models: string[];
   /** Provider 当前配置的默认模型；旧版节点可能不通告。 */
   defaultModel?: string | null;
+  /** 安全认证能力标记，不包含账号信息。 */
+  authMode?: "managed_oauth" | null;
 }
 
 /** 节点信息 */
