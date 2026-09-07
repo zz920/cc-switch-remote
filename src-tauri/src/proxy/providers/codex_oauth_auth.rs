@@ -269,6 +269,9 @@ struct CodexAccountData {
 #[serde(rename_all = "camelCase")]
 struct CodexAccountMetadata {
     account_id: String,
+    /// 上游 workspace ID（ChatGPT-Account-Id 语义）；旧数据可能缺失。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chatgpt_account_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     email: Option<String>,
     authenticated_at: i64,
@@ -282,6 +285,7 @@ impl From<&CodexAccountData> for CodexAccountMetadata {
     fn from(account: &CodexAccountData) -> Self {
         Self {
             account_id: account.account_id.clone(),
+            chatgpt_account_id: account.chatgpt_account_id.clone(),
             email: account.email.clone(),
             authenticated_at: account.authenticated_at,
             token_updated_at_ms: account.token_updated_at_ms,
@@ -2074,7 +2078,11 @@ impl CodexOAuthManager {
     ) -> Result<(), CodexOAuthError> {
         let content = serde_json::to_string(secrets)
             .map_err(|error| CodexOAuthError::ParseError(error.to_string()))?;
-        fs::write(self.test_secret_store_path(), content)?;
+        let path = self.test_secret_store_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
         Ok(())
     }
 
@@ -2290,7 +2298,7 @@ impl CodexOAuthManager {
                     accounts.insert(
                         key,
                         CodexAccountData {
-                            chatgpt_account_id: None,
+                            chatgpt_account_id: metadata.chatgpt_account_id,
                             account_id: metadata.account_id,
                             email: metadata.email,
                             refresh_token,
