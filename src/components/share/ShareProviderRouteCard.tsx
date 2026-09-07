@@ -45,6 +45,8 @@ interface ProviderEntry {
   name: string;
   models: string[];
   defaultModel?: string | null;
+  /** 托管 OAuth（OpenAI Official）：模型由账号动态决定，通告不带模型。 */
+  isManagedOauth: boolean;
   coverage: Record<string, number>;
 }
 
@@ -124,6 +126,7 @@ export function ShareProviderRouteCard({
           name: provider.name,
           models: provider.models ?? [],
           defaultModel: provider.defaultModel,
+          isManagedOauth: provider.authMode === "managed_oauth",
           coverage: Object.fromEntries(
             (provider.models ?? []).map((model) => [
               model,
@@ -385,16 +388,22 @@ export function ShareProviderRouteCard({
           ) : (
             entries.map((entry) => {
               const active = selectedTarget === entry.targetId;
-              const displayModel =
-                entry.defaultModel ??
-                entry.models[0] ??
-                t("share.networkProvider.modelsUnknown", {
-                  defaultValue: "模型信息待刷新",
-                });
-              const coverage = entry.models.reduce(
-                (max, model) => Math.max(max, entry.coverage[model] ?? 0),
-                0,
-              );
+              const displayModel = entry.isManagedOauth
+                ? t("share.networkProvider.managedOauthModel", {
+                    defaultValue: "ChatGPT 账号动态模型",
+                  })
+                : (entry.defaultModel ??
+                  entry.models[0] ??
+                  t("share.networkProvider.modelsUnknown", {
+                    defaultValue: "模型信息待刷新",
+                  }));
+              // 托管 OAuth 不按模型统计覆盖率（通告无模型），节点在线即可用。
+              const coverage = entry.isManagedOauth
+                ? 1
+                : entry.models.reduce(
+                    (max, model) => Math.max(max, entry.coverage[model] ?? 0),
+                    0,
+                  );
               return (
                 <div
                   key={entry.targetId}

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Collapsible,
   CollapsibleContent,
@@ -623,12 +624,17 @@ interface JoinNetworkDialogProps {
 
 function JoinNetworkDialog({ open, onOpenChange }: JoinNetworkDialogProps) {
   const { t } = useTranslation();
+  const { data: status } = useShareStatus(false);
   const requestJoin = useRequestJoin();
   const [input, setInput] = useState("");
+  const [relayAddr, setRelayAddr] = useState("");
 
   useEffect(() => {
-    if (open) setInput("");
-  }, [open]);
+    if (open) {
+      setInput("");
+      setRelayAddr(status?.relayAddr ?? "");
+    }
+  }, [open, status?.relayAddr]);
 
   const handleJoin = async () => {
     const shareId = extractShareId(input);
@@ -637,7 +643,10 @@ function JoinNetworkDialog({ open, onOpenChange }: JoinNetworkDialogProps) {
       return;
     }
     try {
-      await requestJoin.mutateAsync(shareId);
+      await requestJoin.mutateAsync({
+        shareId,
+        relayAddr: relayAddr.trim() || undefined,
+      });
       toast.success(t("share.toast.joinRequested"), { closeButton: true });
       onOpenChange(false);
     } catch (error) {
@@ -669,6 +678,20 @@ function JoinNetworkDialog({ open, onOpenChange }: JoinNetworkDialogProps) {
           />
           <p className="text-xs text-muted-foreground">
             {t("share.join.shareIdDescription")}
+          </p>
+          <Label htmlFor="share-join-relay">
+            {t("share.join.relayAddrLabel")}
+          </Label>
+          <Textarea
+            id="share-join-relay"
+            value={relayAddr}
+            onChange={(event) => setRelayAddr(event.target.value)}
+            placeholder={t("share.join.relayAddrPlaceholder")}
+            rows={3}
+            className="font-mono text-xs"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("share.join.relayAddrDescription")}
           </p>
         </div>
         <DialogFooter>

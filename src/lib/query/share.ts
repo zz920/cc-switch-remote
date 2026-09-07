@@ -69,7 +69,10 @@ export function useCreateNetwork() {
 }
 
 export function useRequestJoin() {
-  return useShareMutation((shareId: string) => shareApi.requestJoin(shareId));
+  return useShareMutation(
+    ({ shareId, relayAddr }: { shareId: string; relayAddr?: string }) =>
+      shareApi.requestJoin(shareId, relayAddr),
+  );
 }
 
 export function useCancelJoin() {

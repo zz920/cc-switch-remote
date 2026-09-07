@@ -1178,8 +1178,18 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let shared_request_context =
+            extensions.get::<crate::share::official::SharedRequestContext>();
+        let shared_codex_official_account_id =
+            crate::share::official::shared_codex_official_account_id(
+                app_type.as_str(),
+                provider,
+                shared_request_context,
+            )
+            .map_err(ProxyError::AuthError)?;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
-            && super::providers::is_codex_official_provider(provider);
+            && super::providers::is_codex_official_provider(provider)
+            && shared_codex_official_account_id.is_none();
 
         if codex_official_auth_passthrough {
             validate_codex_official_authorization(headers, provider)?;
@@ -1654,7 +1664,15 @@ impl RequestForwarder {
         // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
         // 精确认证材料。实际日志永远不输出这些值。
         let mut log_secrets: Vec<String> = Vec::new();
-        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        let extracted_auth = if shared_codex_official_account_id.is_some() {
+            Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ))
+        } else {
+            adapter.extract_auth(provider)
+        };
+        let mut auth_headers = if let Some(mut auth) = extracted_auth {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -1713,10 +1731,12 @@ impl RequestForwarder {
                     let codex_auth = &codex_state.0;
 
                     // 从 provider.meta 获取关联的 ChatGPT 账号 ID
-                    let account_id = provider
-                        .meta
-                        .as_ref()
-                        .and_then(|m| m.managed_account_id_for("codex_oauth"));
+                    let account_id = shared_codex_official_account_id.clone().or_else(|| {
+                        provider
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.managed_account_id_for("codex_oauth"))
+                    });
 
                     let token_result = match &account_id {
                         Some(id) => {
@@ -1732,7 +1752,9 @@ impl RequestForwarder {
                     match token_result {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
-                            should_send_codex_oauth_session_headers = true;
+                            // 共享请求不把消费方的会话路由标识带给 Official 上游。
+                            should_send_codex_oauth_session_headers =
+                                shared_request_context.is_none();
                             // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
                             codex_oauth_account_id = match account_id {
                                 Some(id) => Some(id),

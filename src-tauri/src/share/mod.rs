@@ -17,6 +17,7 @@ pub mod config;
 pub mod identity;
 pub mod ingress;
 pub mod keystore;
+pub mod official;
 pub mod quota;
 pub mod route_hook;
 pub mod swarm;
@@ -57,6 +58,8 @@ pub struct ShareManager {
 
 pub struct ShareManagerInner {
     db: Arc<Database>,
+    /// Official 共享只从本机托管账号取凭据，不读取消费方认证头。
+    codex_oauth_manager: Arc<crate::proxy::providers::codex_oauth_auth::CodexOAuthManager>,
     /// 节点身份密钥对（首次启动生成）
     identity: AsyncRwLock<Option<libp2p::identity::Keypair>>,
     /// 当前 share key（b64；准入校验共享读取，重生成即全员失效）
@@ -80,6 +83,8 @@ pub struct ShareManagerInner {
     relay_transport: AsyncRwLock<Option<String>>,
     /// 已知节点（含离线，key = peer_id base58）
     peers: Arc<AsyncRwLock<HashMap<String, PeerRuntime>>>,
+    /// 新节点连上时唤醒 join_wait_loop，让加入申请秒级送达而不必等轮询周期
+    join_wake: Arc<tokio::sync::Notify>,
     /// 消费侧按应用选择的远端 Provider target（缺少 app 键表示使用本地 Provider）
     route_targets: AsyncRwLock<HashMap<String, HashSet<String>>>,
     /// 加入申请（出借方待审批，key = peer_id）
@@ -122,10 +127,14 @@ struct PendingJoinState {
 }
 
 impl ShareManager {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(
+        db: Arc<Database>,
+        codex_oauth_manager: Arc<crate::proxy::providers::codex_oauth_auth::CodexOAuthManager>,
+    ) -> Self {
         Self {
             inner: Arc::new(ShareManagerInner {
                 db,
+                codex_oauth_manager,
                 identity: AsyncRwLock::new(None),
                 share_key: Arc::new(AsyncRwLock::new(None)),
                 network: AsyncRwLock::new(None),
@@ -148,6 +157,7 @@ impl ShareManager {
                 relay_connected: AsyncRwLock::new(false),
                 relay_transport: AsyncRwLock::new(None),
                 peers: Arc::new(AsyncRwLock::new(HashMap::new())),
+                join_wake: Arc::new(tokio::sync::Notify::new()),
                 route_targets: AsyncRwLock::new(HashMap::new()),
                 join_requests: Arc::new(AsyncRwLock::new(HashMap::new())),
                 join_responders: AsyncRwLock::new(HashMap::new()),
@@ -443,7 +453,11 @@ impl ShareManager {
     }
 
     /// 发起加入（消费方）：生成短码，等待出借方审批
-    pub async fn request_join(&self, share_id_input: String) -> Result<RequestJoinResult, String> {
+    pub async fn request_join(
+        &self,
+        share_id_input: String,
+        relay_addr: Option<String>,
+    ) -> Result<RequestJoinResult, String> {
         if self.inner.network.read().await.is_some() {
             return Err("已在网络中，请先退出当前网络".to_string());
         }
@@ -455,6 +469,12 @@ impl ShareManager {
             return Err("share id 格式不正确（8 位字符）".to_string());
         }
         let hash = auth::share_id_hash(&share_id);
+
+        // 加入方尚无网络记录，因此必须先把对话框中提供的 Relay 保存为全局配置。
+        // 后续 request_join 与获批后的正式网络运行都会读取同一份配置。
+        if let Some(relay_addr) = relay_addr.filter(|value| !value.trim().is_empty()) {
+            self.set_relay_addr(Some(relay_addr)).await?;
+        }
 
         // 以待审批网络配置启动 swarm（仅用于发现；审批通过前无 key，无法消费）
         self.ensure_swarm().await?;
@@ -563,9 +583,11 @@ impl ShareManager {
                     })
                     .await;
 
-                if let Ok(Ok(Ok(response))) =
-                    tokio::time::timeout(std::time::Duration::from_secs(15), rx).await
-                {
+                // 审批是人工操作，必须让响应通道存活到本次申请到期。
+                // 原先固定 15 秒会让 consumer 丢弃仍在 provider 等待审批的流，
+                // 随后的批准只能写回失效流，consumer 因而永远无法完成加入。
+                let response_timeout = join_response_timeout(expires_at);
+                if let Ok(Ok(Ok(response))) = tokio::time::timeout(response_timeout, rx).await {
                     if response.accepted {
                         if let Some(key) = response.share_key {
                             self.finalize_join(&share_id, &hash, key).await;
@@ -575,7 +597,12 @@ impl ShareManager {
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            // 有新节点连上时立即重试（PeerConnected 触发 notify_waiters），
+            // sleep 仅作兜底，避免申请送达多等一个轮询周期。
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                _ = self.inner.join_wake.notified() => {}
+            }
         }
     }
 
@@ -609,14 +636,19 @@ impl ShareManager {
                 .db
                 .save_share_network(&row)
                 .map_err(|e| e.to_string())?;
+            // 加入方默认以用户（消费方）身份入网：仅本机路由，等用户显式
+            // 切换共享供应商。创建方才默认供应商（见 create_network）。
             self.inner
                 .db
-                .set_setting(SHARE_MODE_SETTING, ShareMode::Provider.as_str())
+                .set_setting(SHARE_MODE_SETTING, ShareMode::Consumer.as_str())
                 .map_err(|e| e.to_string())?;
             *self.inner.pending_join.write().await = None;
             self.apply_network_row(row).await;
             *self.inner.share_key.write().await = Some(share_key);
             self.start_full_runtime().await?;
+            // key 刚到位：立即对在线节点做一次 meta 认证刷新，别等 UI 轮询
+            // 或 60s 兜底循环（否则节点数会空转半分钟以上才显示对端）。
+            self.refresh_online_peer_meta().await;
             Ok(())
         }
         .await;
@@ -746,7 +778,7 @@ impl ShareManager {
         if self.current_share_mode().await == ShareMode::Consumer {
             return Err("当前节点是用户模式，不能配置共享 Provider".to_string());
         }
-        // 校验：不允许出借官方/托管供应商
+        // Official 仅允许出借显式绑定且已加载的本机 Codex OAuth 账号。
         let mut cleaned = Vec::new();
         for entry in ids {
             let Some((app, provider_id)) = entry.split_once(':') else {
@@ -759,7 +791,24 @@ impl ShareManager {
                 .map_err(|e| format!("读取供应商失败: {e}"))?
                 .ok_or_else(|| format!("供应商不存在: {entry}"))?;
             if provider.category.as_deref() == Some("official") {
-                return Err(format!("官方/托管供应商不可外借: {}", provider.name));
+                let account_id = official::managed_codex_official_account_id(app, &provider)
+                    .ok_or_else(|| {
+                        format!(
+                            "Official Provider 仅支持显式绑定本机 Codex OAuth 账号: {}",
+                            provider.name
+                        )
+                    })?;
+                if !self
+                    .inner
+                    .codex_oauth_manager
+                    .has_account(&account_id)
+                    .await
+                {
+                    return Err(format!(
+                        "Official Provider 绑定的 Codex OAuth 账号不可用，请重新登录: {}",
+                        provider.name
+                    ));
+                }
             }
             cleaned.push(entry);
         }
@@ -973,6 +1022,10 @@ impl ShareManager {
             (peer.name.clone(), provider)
         };
         if app_type == "codex"
+            // 托管 OAuth（OpenAI Official）的模型由账号动态决定，公告可能不带
+            // 模型；此时合成 config.toml 不写 model 字段，交给 Codex CLI 自身的
+            // 默认模型，不能因此拒绝激活。
+            && advertised.auth_mode.as_deref() != Some("managed_oauth")
             && advertised
                 .default_model
                 .as_deref()
@@ -1470,6 +1523,8 @@ impl ShareManager {
                         entry.direct = direct;
                     }
                     self.sync_route_table().await;
+                    // 唤醒可能在等轮询周期的加入申请循环，立即向新节点发申请
+                    self.inner.join_wake.notify_waiters();
                     // 连接建立后立即拉一次能力通告
                     let manager = self.clone();
                     let pid = peer_id.to_base58();
@@ -1541,11 +1596,13 @@ impl ShareManager {
                         .map(|existing| existing.short_code == request.short_code)
                         .unwrap_or(false);
                     if duplicate {
-                        let _ = respond.send(JoinResponseWire {
-                            accepted: false,
-                            share_key: None,
-                            reason: Some("已有相同加入申请待审批".to_string()),
-                        });
+                        // 对端可能因连接闪断重发同一申请。保留原申请卡，但把
+                        // 审批响应切换到最新的存活流，避免批准写入旧连接。
+                        self.inner
+                            .join_responders
+                            .write()
+                            .await
+                            .insert(pid, respond);
                         continue;
                     }
                     let info = JoinRequestInfo {
@@ -1564,6 +1621,7 @@ impl ShareManager {
                         .write()
                         .await
                         .insert(pid.clone(), respond);
+                    let request_code = info.short_code.clone();
                     self.emit("share:join-request", info);
                     // 超时自动拒绝
                     let manager = self.clone();
@@ -1572,13 +1630,15 @@ impl ShareManager {
                             config::JOIN_REQUEST_TTL_SECS as u64,
                         ))
                         .await;
-                        if manager
+                        let is_same_request = manager
                             .inner
-                            .join_responders
+                            .join_requests
                             .read()
                             .await
-                            .contains_key(&pid)
-                        {
+                            .get(&pid)
+                            .map(|request| request.short_code == request_code)
+                            .unwrap_or(false);
+                        if is_same_request {
                             let _ = manager
                                 .reject_join(&pid, Some("审批超时".to_string()))
                                 .await;
@@ -1603,6 +1663,7 @@ impl ShareManager {
     /// 出借侧服务入站数据面流
     async fn serve_inbound(&self, peer_id: PeerId, stream: libp2p::Stream) {
         let pid = peer_id.to_base58();
+        let app_handle = self.inner.app_handle.read().await.clone();
         let state = {
             let mut states = self.inner.lend_states.write().await;
             match states.get(&pid) {
@@ -1613,6 +1674,7 @@ impl ShareManager {
                             self.inner.db.clone(),
                             &pid,
                             self.inner.whitelist.clone(),
+                            app_handle,
                         )
                         .await,
                     );
@@ -1628,6 +1690,7 @@ impl ShareManager {
             self.inner.quota.clone(),
             self.inner.whitelist.clone(),
             self.inner.node_name.read().await.clone(),
+            self.inner.codex_oauth_manager.clone(),
         );
         ingress::serve_lend_stream(stream, (*state).clone(), ctx).await;
     }
@@ -1664,14 +1727,15 @@ impl ShareManager {
     /// 状态查询由前端定期调用，因此将刷新放在该入口可以让节点名称等
     /// 元数据在下一次轮询内同步，同时限制并发请求的单次等待时间。
     async fn refresh_online_peer_meta(&self) {
+        // 注意不能按 authenticated 过滤：authenticated 只有 meta 刷新成功才会置
+        // true，过滤未认证节点会让"审批后拿到 key 的节点"永远等 60s 兜底循环
+        // 才完成首次认证（表现为节点数 0 持续半分钟以上）。在线即刷新。
         let peer_ids: Vec<String> = {
             let peers = self.inner.peers.read().await;
             let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
             peers
                 .iter()
-                .filter(|(id, p)| {
-                    p.online && p.authenticated && relay_peer_id.as_deref() != Some(id.as_str())
-                })
+                .filter(|(id, p)| p.online && relay_peer_id.as_deref() != Some(id.as_str()))
                 .map(|(id, _)| id.clone())
                 .collect()
         };
@@ -1728,12 +1792,23 @@ impl ShareManager {
                 Vec::new(),
             )
             .await;
-        let Ok(response) = result else {
-            return;
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                // 静默失败会让节点永远停留在未认证状态（UI 节点数为 0）且无从排查，
+                // 必须留下线索。典型原因：对端离线、流协议握手失败。
+                log::warn!("[Share] 拉取节点 {peer_id} meta 失败: {error}");
+                return;
+            }
         };
         // 只有成功的 meta 响应才证明对端接受了当前共享密钥。不能仅凭
         // “请求有 HTTP 响应”判定认证成功，否则 401 错误体也可能被误记为在线。
         if !response.status().is_success() {
+            log::warn!(
+                "[Share] 节点 {peer_id} meta 响应 HTTP {}（共享密钥不匹配，或本机与对端时钟偏差超过 ±{}s 防重放窗口）",
+                response.status().as_u16(),
+                config::AUTH_WINDOW_SECS
+            );
             return;
         }
         let body = match axum::body::to_bytes(response.into_body(), 64 * 1024).await {
@@ -2042,6 +2117,11 @@ fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
     })
 }
 
+fn join_response_timeout(expires_at: i64) -> std::time::Duration {
+    let remaining = expires_at.saturating_sub(chrono::Utc::now().timestamp());
+    std::time::Duration::from_secs(remaining.max(1) as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2078,6 +2158,15 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].contains("/udp/15720/quic-v1/"));
         assert!(candidates[1].contains("/tcp/15720/"));
+    }
+
+    #[test]
+    fn join_response_waits_for_the_remaining_approval_window() {
+        let expires_at = chrono::Utc::now().timestamp() + config::JOIN_REQUEST_TTL_SECS;
+        let timeout = join_response_timeout(expires_at);
+
+        assert!(timeout >= std::time::Duration::from_secs(299));
+        assert!(timeout <= std::time::Duration::from_secs(300));
     }
 
     #[test]

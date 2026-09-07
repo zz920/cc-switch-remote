@@ -3292,9 +3292,10 @@
       "usage": "View usage",
       "refresh": "Refresh shared Providers",
       "saved": "Shared Provider routing updated",
-        "localHidden": "In User mode, either a local Provider or a Share Network Provider can be the active route.",
+      "localHidden": "In User mode, either a local Provider or a Share Network Provider can be the active route.",
       "proxyRequired": "Shared Providers are selected, but {{app}} must enable local routing takeover before requests can use the share network.",
-      "openRouting": "Configure Routing"
+      "openRouting": "Configure Routing",
+      "managedOauthModel": "Dynamic ChatGPT account models"
     },
     "status": {
       "connected": "Connected",
@@ -3312,6 +3313,9 @@
       "shareIdLabel": "Network ID",
       "shareIdPlaceholder": "Network ID or tokentap://join?id= link",
       "shareIdDescription": "You can paste a full invite link; the network ID is extracted automatically.",
+      "relayAddrLabel": "Relay address",
+      "relayAddrPlaceholder": "For example, /ip4/192.168.1.100/tcp/15720/p2p/...",
+      "relayAddrDescription": "You can configure a relay before joining for the first time. It is saved for subsequent connections. Leave it empty when a built-in or saved relay is available.",
       "invalidShareId": "Please enter a valid network ID",
       "submit": "Request to Join",
       "pendingTitle": "Waiting for admin approval",
@@ -3393,7 +3397,7 @@
       "confirmMessage": "Leave this share network? You will no longer be able to use resources shared by its members."
     },
     "settings": {
-      "notJoinedHint": "You have not joined a share network yet. Create or join one from the Share Network section in the Routing panel; the settings below take effect after joining.",
+      "notJoinedHint": "You have not joined a share network yet. Configure a relay first if needed, then create or join a network; other settings take effect after joining.",
       "keyFileWarningTitle": "Key storage risk",
       "keyFileWarning": "The key is not stored in the system keychain, which is less secure. Please check that the system keychain is available.",
       "nodeName": {
@@ -3404,15 +3408,19 @@
       "relay": {
         "title": "Relay Address",
         "description": "Relay server used to forward traffic when a direct connection is not possible.",
-        "placeholder": "Leave empty to use the official relay",
+        "placeholder": "Enter relay multiaddrs; leave empty to use configured defaults",
         "resetDefault": "Reset to Default"
       },
       "sharedProviders": {
         "title": "Providers I Share",
         "description": "Choose which providers to lend to network members. Nothing is shared by default.",
         "empty": "No providers for this app yet",
-        "officialNotAllowed": "Official providers cannot be shared",
-        "officialBadge": "Not shareable"
+        "officialNotAllowed": "Only OpenAI Official providers explicitly bound to a local Codex OAuth account can be shared",
+        "officialBadge": "Not shareable",
+        "bindAndShare": "Bind & share",
+        "goLogin": "Log in to ChatGPT account",
+        "binding": "Binding…",
+        "bindSuccess": "Bound account {{account}} and checked sharing. Click Save to apply."
       }
     },
     "dangerZone": {

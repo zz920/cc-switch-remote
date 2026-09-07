@@ -256,7 +256,7 @@ pub async fn handle_non_streaming(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
 
-                spawn_log_usage(
+                record_log_usage(
                     state,
                     ctx,
                     usage,
@@ -264,7 +264,8 @@ pub async fn handle_non_streaming(
                     &ctx.request_model,
                     status.as_u16(),
                     false,
-                );
+                )
+                .await;
             } else {
                 let model = json_value
                     .get("model")
@@ -273,7 +274,7 @@ pub async fn handle_non_streaming(
                     .map(str::to_string)
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
-                spawn_log_usage(
+                record_log_usage(
                     state,
                     ctx,
                     TokenUsage::default(),
@@ -281,7 +282,8 @@ pub async fn handle_non_streaming(
                     &ctx.request_model,
                     status.as_u16(),
                     false,
-                );
+                )
+                .await;
                 log::debug!(
                     "[{}] 未能解析 usage 信息，跳过记录",
                     parser_config.app_type_str
@@ -293,7 +295,7 @@ pub async fn handle_non_streaming(
                 ctx.tag,
                 body_bytes.len()
             );
-            spawn_log_usage(
+            record_log_usage(
                 state,
                 ctx,
                 TokenUsage::default(),
@@ -301,7 +303,8 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
-            );
+            )
+            .await;
         }
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
@@ -558,8 +561,10 @@ pub(crate) fn create_usage_collector(
     ))
 }
 
-/// 异步记录使用量
-fn spawn_log_usage(
+/// 记录已完整接收的非流式响应使用量。
+///
+/// 在响应返回前完成落账，确保紧随其后的额度检查能够看到本次消耗。
+async fn record_log_usage(
     state: &ProxyState,
     ctx: &RequestContext,
     usage: TokenUsage,
@@ -575,36 +580,25 @@ fn spawn_log_usage(
         }
     }
 
-    let state = state.clone();
-    let provider_id = ctx.provider.id.clone();
-    let app_type_str = ctx.app_type_str.to_string();
-    let model = model.to_string();
-    let request_model = request_model.to_string();
     // 「按请求计价」模式的锚点：映射后的出站模型，无映射时等于 request_model
-    let outbound_model = ctx
-        .outbound_model
-        .clone()
-        .unwrap_or_else(|| ctx.request_model.clone());
+    let outbound_model = ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model);
     let latency_ms = ctx.latency_ms();
-    let session_id = ctx.session_id.clone();
 
-    tokio::spawn(async move {
-        log_usage_internal(
-            &state,
-            &provider_id,
-            &app_type_str,
-            &model,
-            &request_model,
-            &outbound_model,
-            usage,
-            latency_ms,
-            None,
-            is_streaming,
-            status_code,
-            Some(session_id),
-        )
-        .await;
-    });
+    log_usage_internal(
+        state,
+        &ctx.provider.id,
+        ctx.app_type_str,
+        model,
+        request_model,
+        outbound_model,
+        usage,
+        latency_ms,
+        None,
+        is_streaming,
+        status_code,
+        Some(ctx.session_id.clone()),
+    )
+    .await;
 }
 
 pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {

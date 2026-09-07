@@ -18,6 +18,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -64,6 +65,12 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 
 /// User-Agent
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
+
+/// OAuth 元数据文件版本。v1 将 refresh/id token 明文写在 JSON 中；v2 只保留
+/// 非敏感账号元数据，秘密由操作系统凭据库持有。
+const CODEX_OAUTH_STORE_VERSION: u32 = 2;
+#[cfg(not(test))]
+const CODEX_OAUTH_KEYRING_SERVICE: &str = "tokentap";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -250,6 +257,36 @@ struct CodexAccountData {
     pub token_updated_at_ms: i64,
 }
 
+/// v2 磁盘元数据，不包含任何 OAuth token。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAccountMetadata {
+    account_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    authenticated_at: i64,
+    #[serde(default)]
+    token_updated_at_ms: i64,
+    /// 用于审计和未来迁移；生产环境固定为 keyring。
+    secret_storage: String,
+}
+
+impl From<&CodexAccountData> for CodexAccountMetadata {
+    fn from(account: &CodexAccountData) -> Self {
+        Self {
+            account_id: account.account_id.clone(),
+            email: account.email.clone(),
+            authenticated_at: account.authenticated_at,
+            token_updated_at_ms: account.token_updated_at_ms,
+            secret_storage: if cfg!(test) {
+                "test_store".to_string()
+            } else {
+                "keyring".to_string()
+            },
+        }
+    }
+}
+
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
 impl From<&CodexAccountData> for GitHubAccount {
     fn from(data: &CodexAccountData) -> Self {
@@ -269,13 +306,24 @@ impl From<&CodexAccountData> for GitHubAccount {
     }
 }
 
-/// 持久化存储结构（v1）
+/// 旧版明文持久化结构，仅用于一次性迁移。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct CodexOAuthStore {
+struct CodexOAuthStoreV1 {
     #[serde(default)]
     version: u32,
     #[serde(default)]
     accounts: HashMap<String, CodexAccountData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_account_id: Option<String>,
+}
+
+/// 当前持久化结构。账号 token 不得出现在这个文件中。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct CodexOAuthStoreV2 {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    accounts: HashMap<String, CodexAccountMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_account_id: Option<String>,
 }
@@ -1141,6 +1189,12 @@ impl CodexOAuthManager {
         Self::sorted_accounts(&accounts, default_id.as_deref())
     }
 
+    /// 判断指定托管账号是否已完整加载。v2 启动时只有系统凭据库中的秘密成功
+    /// 读取后账号才会进入该集合，因此共享准入可以据此 fail closed。
+    pub async fn has_account(&self, account_id: &str) -> bool {
+        self.accounts.read().await.contains_key(account_id)
+    }
+
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CodexOAuthError> {
         log::info!("[CodexOAuth] 移除账号: {account_id}");
         // Wait for all in-flight refresh/adopt operations before deleting. New
@@ -1213,14 +1267,14 @@ impl CodexOAuthManager {
         // the clear has committed.
         let _lifecycle = self.lifecycle_lock.write().await;
 
-        let account_ids = self
+        let account_generations = self
             .accounts
             .read()
             .await
-            .keys()
-            .cloned()
+            .values()
+            .map(|account| (account.account_id.clone(), account.token_updated_at_ms))
             .collect::<Vec<_>>();
-        for account_id in &account_ids {
+        for (account_id, _) in &account_generations {
             crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
                 .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
         }
@@ -1252,6 +1306,9 @@ impl CodexOAuthManager {
 
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
+        }
+        for (account_id, generation) in account_generations {
+            self.delete_account_secrets(&account_id, generation)?;
         }
 
         Ok(())
@@ -1450,6 +1507,310 @@ impl CodexOAuthManager {
         )
     }
 
+    fn secret_key(account_id: &str, generation: i64, kind: &str) -> String {
+        let account_hash = Sha256::digest(account_id.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        format!("codex-oauth-{kind}-{}-{generation}", &account_hash[..24])
+    }
+
+    /// Windows 凭据库单条 password 上限为 2560 字节（UTF-16 编码即 1280 字符），
+    /// 而 ChatGPT 的 id_token（JWT）可达数 KB，直接写入会报
+    /// `Attribute 'password encoded as UTF-16' is longer than platform limit`。
+    /// 因此超长值按 [`KEYRING_VALUE_CHUNK_CHARS`] 字符分块存到
+    /// `{base_key}#c0..#c{n-1}` 多条凭据，基础条目只写块数标记，
+    /// 读取时重组。短值（含 refresh token）保持单条旧格式，完全兼容。
+    const KEYRING_VALUE_CHUNK_CHARS: usize = 1024;
+    const KEYRING_CHUNK_MARKER_PREFIX: &str = "chunked:v1:";
+
+    fn chunk_entry_key(base_key: &str, index: usize) -> String {
+        format!("{base_key}#c{index}")
+    }
+
+    fn chunk_marker(count: usize) -> String {
+        format!("{}{count}", Self::KEYRING_CHUNK_MARKER_PREFIX)
+    }
+
+    fn parse_chunk_marker(value: &str) -> Option<usize> {
+        value
+            .strip_prefix(Self::KEYRING_CHUNK_MARKER_PREFIX)?
+            .parse()
+            .ok()
+    }
+
+    /// 按字符（而非字节）边界切块，确保每块在所有平台都低于单条长度限制。
+    fn split_into_chunks(value: &str) -> Vec<&str> {
+        let mut chunks = Vec::new();
+        let mut rest = value;
+        while rest.chars().count() > Self::KEYRING_VALUE_CHUNK_CHARS {
+            let split_at = rest
+                .char_indices()
+                .nth(Self::KEYRING_VALUE_CHUNK_CHARS)
+                .map(|(index, _)| index)
+                .unwrap_or(rest.len());
+            let (chunk, tail) = rest.split_at(split_at);
+            chunks.push(chunk);
+            rest = tail;
+        }
+        chunks.push(rest);
+        chunks
+    }
+
+    #[cfg(not(test))]
+    fn entry_for_key(key: &str) -> Result<keyring::Entry, CodexOAuthError> {
+        keyring::Entry::new(CODEX_OAUTH_KEYRING_SERVICE, key).map_err(|error| {
+            CodexOAuthError::IoError(format!("初始化 Codex OAuth 系统凭据库失败: {error}"))
+        })
+    }
+
+    /// 尽力清理 `from` 起多余的块条目（值缩短或降级为单条存储时使用）。
+    /// 静默吞错：残留块条目不影响正确性，只占凭据库条目数。
+    #[cfg(not(test))]
+    fn delete_stale_chunks(base_key: &str, from: usize) {
+        let mut index = from;
+        loop {
+            let entry = match Self::entry_for_key(&Self::chunk_entry_key(base_key, index)) {
+                Ok(entry) => entry,
+                Err(_) => return,
+            };
+            match entry.delete_credential() {
+                Ok(()) => index += 1,
+                Err(_) => return,
+            }
+        }
+    }
+
+    #[cfg(not(test))]
+    fn write_secret_value(
+        account_id: &str,
+        generation: i64,
+        kind: &str,
+        value: &str,
+    ) -> Result<(), CodexOAuthError> {
+        let base_key = Self::secret_key(account_id, generation, kind);
+        let chunks = Self::split_into_chunks(value);
+        let write_err = |error: keyring::Error| {
+            CodexOAuthError::IoError(format!(
+                "写入 Codex OAuth {kind} token 到系统凭据库失败: {error}"
+            ))
+        };
+        if chunks.len() == 1 {
+            Self::entry_for_key(&base_key)?
+                .set_password(value)
+                .map_err(write_err)?;
+            Self::delete_stale_chunks(&base_key, 0);
+        } else {
+            Self::entry_for_key(&base_key)?
+                .set_password(&Self::chunk_marker(chunks.len()))
+                .map_err(write_err)?;
+            for (index, chunk) in chunks.iter().enumerate() {
+                Self::entry_for_key(&Self::chunk_entry_key(&base_key, index))?
+                    .set_password(chunk)
+                    .map_err(write_err)?;
+            }
+            Self::delete_stale_chunks(&base_key, chunks.len());
+        }
+        Ok(())
+    }
+
+    /// 读取（必要时重组分块）凭据。返回 `Ok(None)` 表示条目不存在；
+    /// 块缺失等损坏情况以 `Err` 上抛。
+    #[cfg(not(test))]
+    fn read_secret_value(
+        account_id: &str,
+        generation: i64,
+        kind: &str,
+    ) -> Result<Option<String>, keyring::Error> {
+        let base_key = Self::secret_key(account_id, generation, kind);
+        let base = keyring::Entry::new(CODEX_OAUTH_KEYRING_SERVICE, &base_key)?;
+        match base.get_password() {
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error),
+            Ok(value) => match Self::parse_chunk_marker(&value) {
+                None => Ok(Some(value)),
+                Some(count) => {
+                    let mut assembled =
+                        String::with_capacity(count * Self::KEYRING_VALUE_CHUNK_CHARS);
+                    for index in 0..count {
+                        let chunk_entry = keyring::Entry::new(
+                            CODEX_OAUTH_KEYRING_SERVICE,
+                            &Self::chunk_entry_key(&base_key, index),
+                        )?;
+                        assembled.push_str(&chunk_entry.get_password()?);
+                    }
+                    Ok(Some(assembled))
+                }
+            },
+        }
+    }
+
+    #[cfg(not(test))]
+    fn secret_entry(
+        account_id: &str,
+        generation: i64,
+        kind: &str,
+    ) -> Result<keyring::Entry, CodexOAuthError> {
+        Self::entry_for_key(&Self::secret_key(account_id, generation, kind))
+    }
+
+    #[cfg(test)]
+    fn test_secret_store_path(&self) -> PathBuf {
+        self.storage_path
+            .with_file_name("codex_oauth_secrets.test.json")
+    }
+
+    #[cfg(test)]
+    fn read_test_secret_store(&self) -> Result<HashMap<String, String>, CodexOAuthError> {
+        let path = self.test_secret_store_path();
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let content = fs::read_to_string(path)?;
+        serde_json::from_str(&content)
+            .map_err(|error| CodexOAuthError::ParseError(error.to_string()))
+    }
+
+    #[cfg(test)]
+    fn write_test_secret_store(
+        &self,
+        secrets: &HashMap<String, String>,
+    ) -> Result<(), CodexOAuthError> {
+        let content = serde_json::to_string(secrets)
+            .map_err(|error| CodexOAuthError::ParseError(error.to_string()))?;
+        fs::write(self.test_secret_store_path(), content)?;
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn save_account_secrets(&self, account: &CodexAccountData) -> Result<(), CodexOAuthError> {
+        let generation = account.token_updated_at_ms;
+        Self::write_secret_value(
+            &account.account_id,
+            generation,
+            "refresh",
+            &account.refresh_token,
+        )?;
+        if let Some(id_token) = account.id_token.as_deref() {
+            Self::write_secret_value(&account.account_id, generation, "id", id_token)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn save_account_secrets(&self, account: &CodexAccountData) -> Result<(), CodexOAuthError> {
+        let mut secrets = self.read_test_secret_store()?;
+        let generation = account.token_updated_at_ms;
+        secrets.insert(
+            Self::secret_key(&account.account_id, generation, "refresh"),
+            account.refresh_token.clone(),
+        );
+        if let Some(id_token) = account.id_token.as_ref() {
+            secrets.insert(
+                Self::secret_key(&account.account_id, generation, "id"),
+                id_token.clone(),
+            );
+        }
+        self.write_test_secret_store(&secrets)
+    }
+
+    #[cfg(not(test))]
+    fn load_account_secrets(
+        &self,
+        metadata: &CodexAccountMetadata,
+    ) -> Result<(String, Option<String>), CodexOAuthError> {
+        let generation = metadata.token_updated_at_ms;
+        let refresh_token = Self::read_secret_value(&metadata.account_id, generation, "refresh")
+            .map_err(|error| {
+                CodexOAuthError::IoError(format!(
+                    "读取 Codex OAuth refresh token 的系统凭据失败（account={}）: {error}",
+                    metadata.account_id
+                ))
+            })?
+            .ok_or_else(|| {
+                CodexOAuthError::IoError(format!(
+                    "读取 Codex OAuth refresh token 的系统凭据失败（account={}）: 凭据条目不存在",
+                    metadata.account_id
+                ))
+            })?;
+        let id_token = match Self::read_secret_value(&metadata.account_id, generation, "id") {
+            Ok(Some(token)) => Some(token),
+            Ok(None) => None,
+            Err(error) => {
+                return Err(CodexOAuthError::IoError(format!(
+                    "读取 Codex OAuth id token 的系统凭据失败（account={}）: {error}",
+                    metadata.account_id
+                )))
+            }
+        };
+        Ok((refresh_token, id_token))
+    }
+
+    #[cfg(test)]
+    fn load_account_secrets(
+        &self,
+        metadata: &CodexAccountMetadata,
+    ) -> Result<(String, Option<String>), CodexOAuthError> {
+        let secrets = self.read_test_secret_store()?;
+        let generation = metadata.token_updated_at_ms;
+        let refresh_key = Self::secret_key(&metadata.account_id, generation, "refresh");
+        let refresh_token = secrets.get(&refresh_key).cloned().ok_or_else(|| {
+            CodexOAuthError::IoError(format!(
+                "测试凭据库缺少 Codex OAuth refresh token（account={}）",
+                metadata.account_id
+            ))
+        })?;
+        let id_token = secrets
+            .get(&Self::secret_key(&metadata.account_id, generation, "id"))
+            .cloned();
+        Ok((refresh_token, id_token))
+    }
+
+    #[cfg(not(test))]
+    fn delete_account_secrets(
+        &self,
+        account_id: &str,
+        generation: i64,
+    ) -> Result<(), CodexOAuthError> {
+        for kind in ["refresh", "id"] {
+            let base_key = Self::secret_key(account_id, generation, kind);
+            let entry = Self::entry_for_key(&base_key)?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => {
+                    return Err(CodexOAuthError::IoError(format!(
+                        "删除 Codex OAuth 系统凭据失败（account={account_id}）: {error}"
+                    )))
+                }
+            }
+            // 分块存储的块条目一并清理（尽力而为）
+            Self::delete_stale_chunks(&base_key, 0);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn delete_account_secrets(
+        &self,
+        account_id: &str,
+        generation: i64,
+    ) -> Result<(), CodexOAuthError> {
+        let mut secrets = self.read_test_secret_store()?;
+        for kind in ["refresh", "id"] {
+            secrets.remove(&Self::secret_key(account_id, generation, kind));
+        }
+        self.write_test_secret_store(&secrets)
+    }
+
+    fn read_v2_store_sync(&self) -> Option<CodexOAuthStoreV2> {
+        let content = fs::read_to_string(&self.storage_path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+        if value.get("version").and_then(|value| value.as_u64())? < 2 {
+            return None;
+        }
+        serde_json::from_value(value).ok()
+    }
+
     fn write_store_atomic(&self, content: &str) -> Result<(), CodexOAuthError> {
         if let Some(parent) = self.storage_path.parent() {
             fs::create_dir_all(parent)?;
@@ -1511,15 +1872,71 @@ impl CodexOAuthManager {
         }
 
         let content = std::fs::read_to_string(&self.storage_path)?;
-        let store: CodexOAuthStore = serde_json::from_str(&content)
+        let value: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+        let version = value
+            .get("version")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1);
+        if version > CODEX_OAUTH_STORE_VERSION as u64 {
+            return Err(CodexOAuthError::ParseError(format!(
+                "不支持的 Codex OAuth 存储版本: {version}"
+            )));
+        }
+
+        let (loaded_accounts, default_account_id, migrated) =
+            if version >= CODEX_OAUTH_STORE_VERSION as u64 {
+                let store: CodexOAuthStoreV2 = serde_json::from_value(value)
+                    .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+                let mut accounts = HashMap::new();
+                for (key, metadata) in store.accounts {
+                    let (refresh_token, id_token) = self.load_account_secrets(&metadata)?;
+                    accounts.insert(
+                        key,
+                        CodexAccountData {
+                            account_id: metadata.account_id,
+                            email: metadata.email,
+                            refresh_token,
+                            authenticated_at: metadata.authenticated_at,
+                            id_token,
+                            token_updated_at_ms: metadata.token_updated_at_ms,
+                        },
+                    );
+                }
+                (accounts, store.default_account_id, false)
+            } else {
+                let store: CodexOAuthStoreV1 = serde_json::from_value(value)
+                    .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+                for account in store.accounts.values() {
+                    self.save_account_secrets(account)?;
+                }
+                (store.accounts, store.default_account_id, true)
+            };
+
+        if migrated {
+            let store = CodexOAuthStoreV2 {
+                version: CODEX_OAUTH_STORE_VERSION,
+                accounts: loaded_accounts
+                    .iter()
+                    .map(|(id, account)| (id.clone(), CodexAccountMetadata::from(account)))
+                    .collect(),
+                default_account_id: default_account_id.clone(),
+            };
+            let sanitized = serde_json::to_string_pretty(&store)
+                .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+            self.write_store_atomic(&sanitized)?;
+            log::info!(
+                "[CodexOAuth] 已将 {} 个账号的 OAuth 秘密迁移到系统凭据库",
+                loaded_accounts.len()
+            );
+        }
 
         if let Ok(mut accounts) = self.accounts.try_write() {
-            *accounts = store.accounts;
+            *accounts = loaded_accounts;
             log::info!("[CodexOAuth] 从磁盘加载 {} 个账号", accounts.len());
         }
         if let Ok(mut default) = self.default_account_id.try_write() {
-            *default = store.default_account_id;
+            *default = default_account_id;
             if default.is_none() {
                 if let Ok(accounts) = self.accounts.try_read() {
                     *default = Self::fallback_default_account_id(&accounts);
@@ -1537,9 +1954,17 @@ impl CodexOAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default = self.resolve_default_account_id().await;
 
-        let store = CodexOAuthStore {
-            version: 1,
-            accounts,
+        for account in accounts.values() {
+            self.save_account_secrets(account)?;
+        }
+
+        let previous_store = self.read_v2_store_sync();
+        let store = CodexOAuthStoreV2 {
+            version: CODEX_OAUTH_STORE_VERSION,
+            accounts: accounts
+                .iter()
+                .map(|(id, account)| (id.clone(), CodexAccountMetadata::from(account)))
+                .collect(),
             default_account_id: default,
         };
 
@@ -1547,6 +1972,24 @@ impl CodexOAuthManager {
             .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
 
         self.write_store_atomic(&content)?;
+
+        // 元数据原子提交后再清理不再被引用的旧代 token。清理失败不回滚已经
+        // 成功提交的新凭据，只记录告警供后续账号删除/重新登录处理。
+        if let Some(previous) = previous_store {
+            for (id, metadata) in previous.accounts {
+                let current_generation = store
+                    .accounts
+                    .get(&id)
+                    .map(|account| account.token_updated_at_ms);
+                if current_generation != Some(metadata.token_updated_at_ms) {
+                    if let Err(error) = self
+                        .delete_account_secrets(&metadata.account_id, metadata.token_updated_at_ms)
+                    {
+                        log::warn!("[CodexOAuth] 清理旧代系统凭据失败: {error}");
+                    }
+                }
+            }
+        }
 
         log::info!(
             "[CodexOAuth] 保存到磁盘成功（{} 个账号）",
@@ -1655,6 +2098,54 @@ fn extract_identity_from_tokens(tokens: &OAuthTokenResponse) -> (Option<String>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyring_chunk_marker_roundtrip() {
+        for count in [0usize, 1, 7, 255] {
+            assert_eq!(
+                CodexOAuthManager::parse_chunk_marker(&CodexOAuthManager::chunk_marker(count)),
+                Some(count)
+            );
+        }
+        assert_eq!(CodexOAuthManager::parse_chunk_marker("chunked:v1:x"), None);
+        assert_eq!(
+            CodexOAuthManager::parse_chunk_marker("chunked:v2:3"),
+            None,
+            "未知版本标记必须视为普通短值之外的情形，不应误判块数"
+        );
+        assert_eq!(CodexOAuthManager::parse_chunk_marker(""), None);
+    }
+
+    #[test]
+    fn keyring_split_into_chunks_roundtrip() {
+        let value = "x".repeat(CodexOAuthManager::KEYRING_VALUE_CHUNK_CHARS * 3 + 17)
+            + "中文🎭unicode-tail";
+        let chunks = CodexOAuthManager::split_into_chunks(&value);
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.chars().count() <= CodexOAuthManager::KEYRING_VALUE_CHUNK_CHARS));
+        assert_eq!(chunks.concat(), value);
+    }
+
+    #[test]
+    fn keyring_short_value_stays_single_chunk() {
+        let value = "short-refresh-token";
+        let chunks = CodexOAuthManager::split_into_chunks(value);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], value);
+        // 短值本身不可能是块标记，单条存储格式不受影响
+        assert_eq!(CodexOAuthManager::parse_chunk_marker(value), None);
+    }
+
+    #[test]
+    fn keyring_boundary_value_splits_at_char_boundary() {
+        // 恰好在多字节字符处切分也不应 panic 或产生半个字符
+        let value = "汉".repeat(CodexOAuthManager::KEYRING_VALUE_CHUNK_CHARS + 3);
+        let chunks = CodexOAuthManager::split_into_chunks(&value);
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.concat(), value);
+    }
 
     #[test]
     fn test_parse_interval_number() {
@@ -1789,6 +2280,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persisted_metadata_does_not_contain_oauth_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        manager
+            .add_account_internal(
+                "acc-secure".to_string(),
+                "refresh-secret-value".to_string(),
+                Some("secure@example.com".to_string()),
+                Some("id-secret-value".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let metadata = fs::read_to_string(temp.path().join("codex_oauth_auth.json")).unwrap();
+        assert!(metadata.contains("\"version\": 2"));
+        assert!(!metadata.contains("refresh-secret-value"));
+        assert!(!metadata.contains("id-secret-value"));
+        assert!(!metadata.contains("refresh_token"));
+        assert!(!metadata.contains("id_token"));
+    }
+
+    #[tokio::test]
+    async fn legacy_plaintext_store_is_migrated_to_secret_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let legacy_account = CodexAccountData {
+            account_id: "acc-legacy".to_string(),
+            email: Some("legacy@example.com".to_string()),
+            refresh_token: "legacy-refresh-secret".to_string(),
+            authenticated_at: 1_700_000_000,
+            id_token: Some("legacy-id-secret".to_string()),
+            token_updated_at_ms: 1_700_000_000_000,
+        };
+        let legacy = CodexOAuthStoreV1 {
+            version: 1,
+            accounts: HashMap::from([("acc-legacy".to_string(), legacy_account)]),
+            default_account_id: Some("acc-legacy".to_string()),
+        };
+        fs::write(
+            path.join("codex_oauth_auth.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let manager = CodexOAuthManager::new(path.clone());
+        assert!(manager.has_account("acc-legacy").await);
+        let metadata = fs::read_to_string(path.join("codex_oauth_auth.json")).unwrap();
+        assert!(metadata.contains("\"version\": 2"));
+        assert!(!metadata.contains("legacy-refresh-secret"));
+        assert!(!metadata.contains("legacy-id-secret"));
+
+        let reloaded = CodexOAuthManager::new(path);
+        assert!(reloaded.has_account("acc-legacy").await);
+        assert_eq!(
+            reloaded
+                .accounts
+                .read()
+                .await
+                .get("acc-legacy")
+                .unwrap()
+                .refresh_token,
+            "legacy-refresh-secret"
+        );
+    }
+
+    #[tokio::test]
     async fn test_remove_account() {
         let temp = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
@@ -1820,6 +2379,13 @@ mod tests {
         let accounts = manager.list_accounts().await;
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].id, "acc-456");
+        let persisted = fs::read_to_string(temp.path().join("codex_oauth_auth.json")).unwrap();
+        assert!(!persisted.contains("acc-123"));
+        let secrets = manager.read_test_secret_store().unwrap();
+        assert_eq!(
+            secrets.values().cloned().collect::<Vec<_>>(),
+            vec!["rt2".to_string()]
+        );
     }
 
     #[tokio::test]

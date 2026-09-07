@@ -3292,9 +3292,10 @@
       "usage": "使用量を表示",
       "refresh": "共有ネットワークを更新",
       "saved": "共有ネットワークのルートを更新しました",
-        "localHidden": "ユーザーモードでは、ローカル Provider または共有ネットワーク Provider を現在のルートとして使用できます。",
+      "localHidden": "ユーザーモードでは、ローカル Provider または共有ネットワーク Provider を現在のルートとして使用できます。",
       "proxyRequired": "{{app}} のローカルルート引き継ぎを有効にすると共有ネットワークを利用できます。",
-      "openRouting": "ルートを設定"
+      "openRouting": "ルートを設定",
+      "managedOauthModel": "ChatGPT アカウントの動的モデル"
     },
     "status": {
       "connected": "接続中",
@@ -3312,6 +3313,9 @@
       "shareIdLabel": "ネットワーク ID",
       "shareIdPlaceholder": "ネットワーク ID または tokentap://join?id= リンク",
       "shareIdDescription": "招待リンクをそのまま貼り付けても、ネットワーク ID が自動で抽出されます。",
+      "relayAddrLabel": "リレーアドレス",
+      "relayAddrPlaceholder": "例：/ip4/192.168.1.100/tcp/15720/p2p/...",
+      "relayAddrDescription": "初回参加前にリレーを設定できます。アドレスは保存され、以降の接続にも使用されます。組み込みまたは保存済みのリレーがある場合は空欄にできます。",
       "invalidShareId": "有効なネットワーク ID を入力してください",
       "submit": "参加を申請",
       "pendingTitle": "管理者の承認待ち",
@@ -3393,7 +3397,7 @@
       "confirmMessage": "共有ネットワークを退出しますか？退出後は、メンバーが共有するリソースを利用できなくなります。"
     },
     "settings": {
-      "notJoinedHint": "まだ共有ネットワークに参加していません。「ルーティング」パネルの共有ネットワークセクションから作成・参加できます。以下の設定は参加後に有効になります。",
+      "notJoinedHint": "まだ共有ネットワークに参加していません。必要なら先にリレーを設定してから、ネットワークを作成または参加してください。その他の設定は参加後に有効になります。",
       "keyFileWarningTitle": "キー保存のリスク",
       "keyFileWarning": "キーがシステムキーチェーンに保存されていないため、安全性が低くなっています。システムキーチェーンが利用可能か確認してください。",
       "nodeName": {
@@ -3404,15 +3408,19 @@
       "relay": {
         "title": "リレーアドレス",
         "description": "直接接続できない場合にトラフィックを中継するリレーサーバーのアドレスです。",
-        "placeholder": "空欄の場合は公式リレーを使用",
+        "placeholder": "リレーの multiaddr を入力。空欄の場合は設定済みのデフォルトを使用",
         "resetDefault": "デフォルトに戻す"
       },
       "sharedProviders": {
         "title": "共有するプロバイダー",
         "description": "ネットワークメンバーに貸し出すプロバイダーを選択します。デフォルトではすべて未共有です。",
         "empty": "このアプリにはまだプロバイダーがありません",
-        "officialNotAllowed": "公式プロバイダーは共有できません",
-        "officialBadge": "共有不可"
+        "officialNotAllowed": "ローカルの Codex OAuth アカウントに明示的に紐付けた OpenAI Official プロバイダーのみ共有できます",
+        "officialBadge": "共有不可",
+        "bindAndShare": "バインドして共有",
+        "goLogin": "ChatGPT アカウントにログイン",
+        "binding": "バインド中…",
+        "bindSuccess": "アカウント {{account}} をバインドして共有にチェックしました。保存をクリックして適用してください。"
       }
     },
     "dangerZone": {

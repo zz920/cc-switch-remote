@@ -407,6 +407,16 @@ async fn swarm_loop(
                 match cmd {
                     Some(SwarmCmd::Configure { namespace, relay_addrs }) => {
                         remove_relay_listeners(&mut swarm, &mut state);
+                        // rendezvous cookies are scoped to the namespace used by the
+                        // corresponding DISCOVER request.  Reusing a cookie after a
+                        // failed join switches to another share id makes the relay
+                        // return only changes after the old cursor, so already
+                        // registered creators can be missed indefinitely.  Peer
+                        // candidates are namespace-scoped for the same reason.
+                        state.discover_cookie = None;
+                        state.dialed.clear();
+                        state.peer_candidates.clear();
+                        state.peer_candidate_index.clear();
                         state.namespace = namespace;
                         state.relay_candidates = relay_addrs;
                         state.relay_candidates.sort_by_key(|addr| {
@@ -571,14 +581,22 @@ fn is_quic_addr(addr: &Multiaddr) -> bool {
         .any(|protocol| matches!(protocol, Protocol::QuicV1))
 }
 
-fn ensure_peer_id(addr: Multiaddr, peer: PeerId) -> Multiaddr {
-    if addr
-        .iter()
-        .any(|protocol| matches!(protocol, Protocol::P2p(_)))
-    {
-        addr
-    } else {
-        addr.with(Protocol::P2p(peer))
+fn ensure_peer_id(addr: Multiaddr, peer: PeerId) -> Option<Multiaddr> {
+    // A relay circuit address already contains the relay's PeerId before
+    // `/p2p-circuit`, but it still needs the destination PeerId afterwards:
+    //
+    //   .../p2p/<relay>/p2p-circuit/p2p/<destination>
+    //
+    // Looking for *any* `/p2p` component mistakes the relay id for the
+    // destination.  Dialling the resulting incomplete address later fails with
+    // `peer_id: None`, which cannot be associated with the candidate queue and
+    // leaves the destination permanently marked as dialled.
+    match addr.iter().last() {
+        Some(Protocol::P2p(addressed_peer)) if addressed_peer == peer => Some(addr),
+        Some(Protocol::P2p(_)) => None,
+        Some(Protocol::P2pCircuit) => Some(addr.with(Protocol::P2p(peer))),
+        _ if !is_relay_addr(&addr) => Some(addr.with(Protocol::P2p(peer))),
+        _ => None,
     }
 }
 
@@ -592,7 +610,7 @@ fn peer_candidates(
         .addresses()
         .iter()
         .cloned()
-        .map(|addr| ensure_peer_id(addr, peer))
+        .filter_map(|addr| ensure_peer_id(addr, peer))
         .collect::<Vec<_>>();
     if let Some(relay) = relay_addr {
         let circuit = relay
@@ -614,7 +632,8 @@ fn peer_candidates(
             1
         }
     });
-    candidates.dedup_by(|left, right| left == right);
+    let mut seen = HashSet::new();
+    candidates.retain(|addr| seen.insert(addr.clone()));
     candidates
 }
 
@@ -736,6 +755,12 @@ async fn handle_swarm_event(
                             Ok(listener_id) => {
                                 state.relay_listener_ids.insert(listener_id);
                                 state.relay_reserved = true;
+                                // Configure can run before the relay control
+                                // connection exists.  Retry discovery immediately
+                                // once the connection is usable instead of making a
+                                // new join wait for the periodic 30-second tick.
+                                try_register(swarm, state);
+                                try_discover(swarm, state);
                                 let _ = event_tx
                                     .send(SwarmEventOut::RelayState {
                                         connected: true,
@@ -845,6 +870,11 @@ async fn handle_swarm_event(
         )) => {
             log::warn!("[Share] rendezvous 注册被拒绝: {error:?}");
         }
+        SwarmEvent::Behaviour(ShareBehaviourEvent::Rendezvous(
+            rendezvous::client::Event::DiscoverFailed { error, .. },
+        )) => {
+            log::warn!("[Share] rendezvous 发现失败: {error:?}");
+        }
         SwarmEvent::Behaviour(ShareBehaviourEvent::Dcutr(dcutr::Event {
             remote_peer_id,
             result,
@@ -875,6 +905,62 @@ async fn handle_swarm_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_circuit_address_appends_destination_peer_id() {
+        let relay = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let destination = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let circuit: Multiaddr =
+            format!("/ip4/192.0.2.10/udp/15720/quic-v1/p2p/{relay}/p2p-circuit")
+                .parse()
+                .unwrap();
+
+        let completed = ensure_peer_id(circuit, destination).expect("complete circuit address");
+
+        assert_eq!(
+            completed.to_string(),
+            format!("/ip4/192.0.2.10/udp/15720/quic-v1/p2p/{relay}/p2p-circuit/p2p/{destination}")
+        );
+    }
+
+    #[test]
+    fn relay_circuit_address_with_destination_is_preserved() {
+        let relay = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let destination = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let addressed: Multiaddr =
+            format!("/ip4/192.0.2.10/udp/15720/quic-v1/p2p/{relay}/p2p-circuit/p2p/{destination}")
+                .parse()
+                .unwrap();
+
+        assert_eq!(
+            ensure_peer_id(addressed.clone(), destination),
+            Some(addressed)
+        );
+    }
+
+    #[test]
+    fn direct_address_appends_destination_peer_id() {
+        let destination = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let direct: Multiaddr = "/ip4/192.0.2.11/tcp/49152".parse().unwrap();
+
+        let completed = ensure_peer_id(direct, destination).expect("complete direct address");
+
+        assert_eq!(
+            completed.to_string(),
+            format!("/ip4/192.0.2.11/tcp/49152/p2p/{destination}")
+        );
+    }
+
+    #[test]
+    fn address_with_wrong_final_peer_is_rejected() {
+        let destination = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let other = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let addressed_to_other: Multiaddr = format!("/ip4/192.0.2.12/tcp/49153/p2p/{other}")
+            .parse()
+            .unwrap();
+
+        assert!(ensure_peer_id(addressed_to_other, destination).is_none());
+    }
 
     /// 双内存 swarm 全链路：
     /// 连接建立 → 数据面 stream echo → 加入申请/审批 wire 往返

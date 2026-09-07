@@ -111,6 +111,9 @@ pub struct ShareProviderInfo {
     /// Provider 当前配置的默认模型。旧节点未通告时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 安全认证能力标记；不包含账号 ID、邮箱或 token。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
 }
 
 /// 共享 Provider 的连通性检查结果（由出借方执行探测，不发送实际模型请求）。
@@ -252,5 +255,6 @@ mod tests {
         .expect("legacy provider capability should remain compatible");
 
         assert_eq!(info.default_model, None);
+        assert_eq!(info.auth_mode, None);
     }
 }

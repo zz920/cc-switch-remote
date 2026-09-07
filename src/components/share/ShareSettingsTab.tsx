@@ -56,9 +56,13 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { getAppLabel, PROXY_APP_IDS } from "@/config/appConfig";
 import type { AppId } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCodexOauth } from "@/components/providers/forms/hooks/useCodexOauth";
+import { providersApi } from "@/lib/api/providers";
 import {
   ApprovalCard,
   ShareNetworkSection,
@@ -81,7 +85,12 @@ import type { SharePeer, ShareMode, ShareStatus } from "@/types/share";
 /** 支持出借供应商的应用 */
 const SHARE_APP_IDS: AppId[] = [...PROXY_APP_IDS];
 
-export function ShareSettingsTab() {
+export function ShareSettingsTab({
+  onGoToAuth,
+}: {
+  /** 跳到设置页的认证中心（用于 OpenAI Official 共享前的账号登录引导） */
+  onGoToAuth?: () => void;
+}) {
   const { t } = useTranslation();
   const { data: status, isLoading } = useShareStatus();
   const { data: keyStorage } = useShareKeyStorage();
@@ -203,7 +212,10 @@ export function ShareSettingsTab() {
             <NetworkUsageSection status={joinedStatus} />
             <ShareModeSection status={joinedStatus} />
             {joinedStatus?.mode !== "consumer" && (
-              <SharedProvidersSection status={joinedStatus} />
+              <SharedProvidersSection
+                status={joinedStatus}
+                onGoToAuth={onGoToAuth}
+              />
             )}
             <QuotaSection status={joinedStatus} />
           </AccordionContent>
@@ -231,7 +243,7 @@ export function ShareSettingsTab() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="border-t border-border/50 px-6 pb-6 pt-4">
-            <RelaySection status={joinedStatus} />
+            <RelaySection status={status} />
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -479,14 +491,14 @@ function RelaySection({ status }: { status?: ShareStatus }) {
           value={addr}
           onChange={(event) => setAddr(event.target.value)}
           placeholder={t("share.settings.relay.placeholder")}
-          disabled={!status}
+          disabled={setRelayAddr.isPending}
           rows={3}
           className="min-w-0 flex-1 font-mono text-xs"
         />
         <div className="flex gap-2">
           <Button
             size="sm"
-            disabled={!status || setRelayAddr.isPending}
+            disabled={setRelayAddr.isPending}
             onClick={() => void handleSave(addr.trim() || null)}
           >
             {setRelayAddr.isPending ? (
@@ -499,7 +511,7 @@ function RelaySection({ status }: { status?: ShareStatus }) {
           <Button
             size="sm"
             variant="outline"
-            disabled={!status || setRelayAddr.isPending}
+            disabled={setRelayAddr.isPending}
             onClick={() => {
               setAddr("");
               void handleSave(null);
@@ -516,7 +528,13 @@ function RelaySection({ status }: { status?: ShareStatus }) {
 
 // ========== 我共享的供应商 ==========
 
-function SharedProvidersSection({ status }: { status?: ShareStatus }) {
+function SharedProvidersSection({
+  status,
+  onGoToAuth,
+}: {
+  status?: ShareStatus;
+  onGoToAuth?: () => void;
+}) {
   const { t } = useTranslation();
   const setSharedProviders = useSetSharedProviders();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -561,6 +579,7 @@ function SharedProvidersSection({ status }: { status?: ShareStatus }) {
             selected={selected}
             disabled={!status}
             onToggle={toggle}
+            onGoToAuth={onGoToAuth}
           />
         ))}
       </div>
@@ -587,6 +606,7 @@ interface SharedProviderGroupProps {
   selected: Set<string>;
   disabled: boolean;
   onToggle: (entry: string, checked: boolean) => void;
+  onGoToAuth?: () => void;
 }
 
 function SharedProviderGroup({
@@ -594,10 +614,63 @@ function SharedProviderGroup({
   selected,
   disabled,
   onToggle,
+  onGoToAuth,
 }: SharedProviderGroupProps) {
   const { t } = useTranslation();
   const { data } = useProvidersQuery(appId);
   const providers = useMemo(() => Object.values(data?.providers ?? {}), [data]);
+  const queryClient = useQueryClient();
+  // OpenAI Official 共享要求显式绑定托管 ChatGPT 账号；这里拉取账号列表，
+  // 让未绑定的 Official 条目能一键完成「绑定并共享」而不是死灰禁用。
+  // hook 必须无条件调用（React 规则），非 codex 应用忽略结果即可。
+  const { accounts: codexAccounts, isStatusSuccess: isCodexStatusSuccess } =
+    useCodexOauth();
+  const [bindingProviderId, setBindingProviderId] = useState<string | null>(
+    null,
+  );
+
+  const bindAndShare = async (
+    provider: (typeof providers)[number],
+    entry: string,
+  ) => {
+    const account = codexAccounts.find(
+      (candidate) => !candidate.reauth_required && !candidate.requires_reauth,
+    );
+    if (!account) {
+      onGoToAuth?.();
+      return;
+    }
+    setBindingProviderId(provider.id);
+    try {
+      await providersApi.update(
+        {
+          ...provider,
+          meta: {
+            ...provider.meta,
+            authBinding: {
+              source: "managed_account" as const,
+              authProvider: "codex_oauth",
+              accountId: account.id,
+            },
+          },
+        },
+        appId,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      onToggle(entry, true);
+      toast.success(
+        t("share.settings.sharedProviders.bindSuccess", {
+          account: account.login,
+        }),
+      );
+    } catch (error) {
+      toast.error(
+        t("share.toast.failed", { detail: extractErrorMessage(error) }),
+      );
+    } finally {
+      setBindingProviderId(null);
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -616,30 +689,71 @@ function SharedProviderGroup({
           {providers.map((provider) => {
             const entry = `${appId}:${provider.id}`;
             const isOfficial = provider.category === "official";
+            const isShareableOfficial =
+              isOfficial &&
+              resolveCodexOfficialIdentity(appId, provider) ===
+                "managed_account";
+            const officialBlocked = isOfficial && !isShareableOfficial;
+            const usableCodexAccount =
+              appId === "codex" &&
+              isCodexStatusSuccess &&
+              codexAccounts.some(
+                (candidate) =>
+                  !candidate.reauth_required && !candidate.requires_reauth,
+              );
             return (
               <label
                 key={provider.id}
                 className={`flex items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-sm ${
-                  isOfficial || disabled
+                  officialBlocked || disabled
                     ? "cursor-not-allowed opacity-60"
                     : "cursor-pointer hover:bg-muted/50"
                 }`}
                 title={
-                  isOfficial
+                  officialBlocked && appId === "codex"
                     ? t("share.settings.sharedProviders.officialNotAllowed")
                     : undefined
                 }
               >
                 <Checkbox
                   checked={selected.has(entry)}
-                  disabled={isOfficial || disabled}
+                  disabled={officialBlocked || disabled}
                   onCheckedChange={(checked) => onToggle(entry, checked)}
                 />
                 <span className="min-w-0 flex-1 truncate">{provider.name}</span>
-                {isOfficial && (
-                  <span className="flex-shrink-0 text-xs text-muted-foreground">
-                    {t("share.settings.sharedProviders.officialBadge")}
-                  </span>
+                {officialBlocked && appId === "codex" ? (
+                  // 仅 OpenAI Official（codex）能通过绑定托管 ChatGPT 账号变得
+                  // 可共享，给它行动按钮；其他应用的 Official 一律不可共享，
+                  // 只显示徽标，不能错误地引导去登录 ChatGPT。
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 flex-shrink-0 px-2 text-xs"
+                    disabled={bindingProviderId === provider.id}
+                    onClick={(event) => {
+                      // 阻止冒泡到 label，避免触发 checkbox 的切换语义
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (usableCodexAccount) {
+                        void bindAndShare(provider, entry);
+                      } else {
+                        onGoToAuth?.();
+                      }
+                    }}
+                  >
+                    {bindingProviderId === provider.id
+                      ? t("share.settings.sharedProviders.binding")
+                      : usableCodexAccount
+                        ? t("share.settings.sharedProviders.bindAndShare")
+                        : t("share.settings.sharedProviders.goLogin")}
+                  </Button>
+                ) : (
+                  officialBlocked && (
+                    <span className="flex-shrink-0 text-xs text-muted-foreground">
+                      {t("share.settings.sharedProviders.officialBadge")}
+                    </span>
+                  )
                 )}
               </label>
             );

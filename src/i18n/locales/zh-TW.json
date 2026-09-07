@@ -3293,9 +3293,10 @@
       "usage": "查看用量",
       "refresh": "刷新共享 Provider",
       "saved": "共享 Provider 路由已更新",
-        "localHidden": "使用者模式下，本機 Provider 與共享網路 Provider 均可作為目前路由。",
+      "localHidden": "使用者模式下，本機 Provider 與共享網路 Provider 均可作為目前路由。",
       "proxyRequired": "已選擇共享 Provider，但 {{app}} 需要先開啟本地路由接管，請求才會經過共享網路。",
-      "openRouting": "設定路由"
+      "openRouting": "設定路由",
+      "managedOauthModel": "ChatGPT 帳號動態模型"
     },
     "status": {
       "connected": "已連線",
@@ -3313,6 +3314,9 @@
       "shareIdLabel": "網路 ID",
       "shareIdPlaceholder": "網路 ID 或 tokentap://join?id= 連結",
       "shareIdDescription": "支援直接貼上完整邀請連結，將自動擷取網路 ID。",
+      "relayAddrLabel": "Relay 位址",
+      "relayAddrPlaceholder": "例如 /ip4/192.168.1.100/tcp/15720/p2p/...",
+      "relayAddrDescription": "首次加入前可在此設定 Relay；位址會保存並用於後續連線。若已有內建或已保存的 Relay，可留空。",
       "invalidShareId": "請輸入有效的網路 ID",
       "submit": "申請加入",
       "pendingTitle": "等待管理員審核",
@@ -3394,7 +3398,7 @@
       "confirmMessage": "確定要退出共享網路嗎？退出後將無法使用網路成員共享的資源。"
     },
     "settings": {
-      "notJoinedHint": "尚未加入共享網路。可在「路由」面板的共享網路區建立或加入網路；下方設定將在加入後生效。",
+      "notJoinedHint": "尚未加入共享網路。可先設定 Relay，再從共享網路區建立或加入網路；其他設定將在加入後生效。",
       "keyFileWarningTitle": "金鑰儲存風險",
       "keyFileWarning": "金鑰未存入系統鑰匙圈，安全性較低。建議檢查系統鑰匙圈是否可用。",
       "nodeName": {
@@ -3405,15 +3409,19 @@
       "relay": {
         "title": "Relay 位址",
         "description": "無法直連時用於中繼流量的 relay 伺服器位址。",
-        "placeholder": "留空使用官方 relay",
+        "placeholder": "輸入 Relay multiaddr；留空使用已設定的預設值",
         "resetDefault": "恢復預設"
       },
       "sharedProviders": {
         "title": "我共享的供應商",
         "description": "選擇要出借給網路成員的供應商，預設全部不共享。",
         "empty": "此應用程式下尚無供應商",
-        "officialNotAllowed": "官方供應商不可共享",
-        "officialBadge": "不可共享"
+        "officialNotAllowed": "僅明確綁定本機 Codex OAuth 帳號的 OpenAI Official 供應商可以共享",
+        "officialBadge": "不可共享",
+        "bindAndShare": "綁定並共享",
+        "goLogin": "前往登入 ChatGPT 帳號",
+        "binding": "綁定中…",
+        "bindSuccess": "已綁定帳號 {{account}} 並勾選共享，請點擊儲存生效"
       }
     },
     "dangerZone": {
