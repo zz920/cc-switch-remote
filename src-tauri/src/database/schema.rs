@@ -584,6 +584,11 @@ impl Database {
                     18 => {
                         log::info!("迁移数据库从 v18 到 v19（会话日志字节游标列）");
                         Self::migrate_v18_to_v19(conn)?;
+                        // 上游 cc-switch v3.20.1 的 v18 库没有组网表（两边的 v18
+                        // 编号冲突过）。在 v19 一并幂等补建，保证任何 v18 来源的库
+                        // 升级后 share 功能可用；本 fork 自己的 v18 库则命中 IF NOT
+                        // EXISTS 直接跳过。
+                        Self::ensure_share_tables(conn)?;
                         Self::set_user_version(conn, 19)?;
                     }
                     _ => {
@@ -1640,6 +1645,11 @@ impl Database {
 
     /// v17 -> v18: TokenTap Share 组网表（网络配置单行表 + 节点黑名单）
     fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_share_tables(conn)
+    }
+
+    /// 幂等建组网表（v18 与 v19 补建共用）
+    fn ensure_share_tables(conn: &Connection) -> Result<(), AppError> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS share_network (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
