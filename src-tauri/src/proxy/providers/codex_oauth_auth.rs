@@ -1501,7 +1501,7 @@ impl CodexOAuthManager {
                 )
             })
             .collect::<Vec<_>>();
-        for (account_id, id_token, _) in &account_generations {
+        for (account_id, _, id_token) in &account_generations {
             crate::codex_config::prepare_codex_live_auth_for_managed_account_removal(
                 account_id,
                 id_token.as_deref(),
@@ -2290,6 +2290,7 @@ impl CodexOAuthManager {
                     accounts.insert(
                         key,
                         CodexAccountData {
+                            chatgpt_account_id: None,
                             account_id: metadata.account_id,
                             email: metadata.email,
                             refresh_token,
@@ -3075,7 +3076,7 @@ mod tests {
                 Some("secure@example.com".to_string()),
                 Some("id-secret-value".to_string()),
                 None,
-                None,
+                AccountLoginContext::default(),
             )
             .await
             .unwrap();
@@ -3093,6 +3094,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().to_path_buf();
         let legacy_account = CodexAccountData {
+            chatgpt_account_id: None,
             account_id: "acc-legacy".to_string(),
             email: Some("legacy@example.com".to_string()),
             refresh_token: "legacy-refresh-secret".to_string(),
