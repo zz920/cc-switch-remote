@@ -43,6 +43,12 @@ interface ProviderEntry {
   peerId: string;
   providerId: string;
   name: string;
+  /** 出借该供应商的节点名（同名供应商多节点出借时用于区分） */
+  nodeName: string;
+  /** 本周期经该节点此供应商消费的 token（消费方本地统计） */
+  usedTokens: number | null;
+  /** 出借方为本节点配置的配额上限（节点级；无配额为 null） */
+  peerQuotaCap: number | null;
   models: string[];
   defaultModel?: string | null;
   /** 托管 OAuth（OpenAI Official）：模型由账号动态决定，通告不带模型。 */
@@ -124,6 +130,10 @@ export function ShareProviderRouteCard({
           peerId: peer.peerId,
           providerId: provider.providerId,
           name: provider.name,
+          nodeName: peer.name,
+          usedTokens: provider.usedTokens ?? null,
+          peerQuotaCap:
+            (peer.tokensUsed ?? 0) + (peer.quotaRemaining ?? 0) || null,
           models: provider.models ?? [],
           defaultModel: provider.defaultModel,
           isManagedOauth: provider.authMode === "managed_oauth",
@@ -423,6 +433,11 @@ export function ShareProviderRouteCard({
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-medium">
                           {entry.name}
+                          {entry.nodeName && (
+                            <span className="ml-1 font-normal text-muted-foreground">
+                              @{entry.nodeName}
+                            </span>
+                          )}
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
                           {displayModel}
@@ -430,15 +445,26 @@ export function ShareProviderRouteCard({
                       </span>
                     </label>
                     <div className="flex shrink-0 items-center gap-x-2 text-right text-[10px] text-muted-foreground sm:text-[11px]">
-                      <span>
-                        {t("share.networkProvider.total", {
-                          defaultValue: "总: 0",
-                        })}
-                      </span>
-                      <span aria-hidden="true">|</span>
+                      {entry.peerQuotaCap && entry.peerQuotaCap > 0 ? (
+                        <span
+                          title={t("share.networkProvider.quotaIsPeerLevel", {
+                            defaultValue:
+                              "配额为节点级，供应商行的用量为其归属节点的占用",
+                          })}
+                        >
+                          {t("share.networkProvider.total", {
+                            defaultValue: "总: {{total}}",
+                            total: entry.peerQuotaCap.toLocaleString(),
+                          })}
+                        </span>
+                      ) : null}
+                      {entry.peerQuotaCap && entry.peerQuotaCap > 0 ? (
+                        <span aria-hidden="true">|</span>
+                      ) : null}
                       <span>
                         {t("share.networkProvider.used", {
-                          defaultValue: "已使用: 0",
+                          defaultValue: "已使用: {{used}}",
+                          used: (entry.usedTokens ?? 0).toLocaleString(),
                         })}
                       </span>
                       <span aria-hidden="true">|</span>

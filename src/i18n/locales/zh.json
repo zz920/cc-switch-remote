@@ -3287,8 +3287,8 @@
       "description": "用户模式可在本地 Provider 与网络节点提供的 {{app}} Provider 之间切换。",
       "active": "正在使用",
       "waiting": "可配置",
-      "total": "总: 0",
-      "used": "已使用: 0",
+      "total": "总: {{total}}",
+      "used": "已使用: {{used}}",
       "dragHint": "拖动调整共享 Provider 顺序",
       "noneAvailable": "当前没有在线节点为 {{app}} 提供可用 Provider。",
       "providerCount": "{{count}} 个 Provider",
@@ -3304,7 +3304,8 @@
       "localHidden": "用户模式下，本地 Provider 与共享网络 Provider 均可作为当前路由。",
       "proxyRequired": "共享 Provider 已选择，但 {{app}} 需要先开启本地路由接管，请求才会经过共享网络。",
       "openRouting": "配置路由",
-      "managedOauthModel": "ChatGPT 账号动态模型"
+      "managedOauthModel": "ChatGPT 账号动态模型",
+      "quotaIsPeerLevel": "配额为节点级，供应商行的用量为其归属节点的占用"
     },
     "status": {
       "connected": "已连接",

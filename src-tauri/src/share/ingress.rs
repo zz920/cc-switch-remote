@@ -506,6 +506,7 @@ async fn shared_provider_infos(
             )
         };
         out.push(ShareProviderInfo {
+            used_tokens: None,
             app: app.to_string(),
             provider_id: provider.id.clone(),
             name: provider.name.clone(),

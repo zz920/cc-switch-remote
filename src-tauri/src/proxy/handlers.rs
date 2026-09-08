@@ -949,32 +949,7 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    // OpenAI Codex 后端在安全缓冲（响应头 x-codex-safety-buffering-enabled）等
-    // 场景会把 stream:true 的 SSE 结果整包返回且不带 Content-Type（与 Claude 侧
-    // #2234 的"未标记 SSE 体"同源）。is_sse() 因此判否，本机与共享下游都会按
-    // 非流式处理：usage 解析失败记 0 token（共享双方 Token 统计全为 0 的根因），
-    // 客户端也拿不到 text/event-stream。请求明确要求流式且上游成功、却又完全
-    // 没给 Content-Type 时，重打 SSE 头交还既有流式管线——事件解析、usage
-    // 提取、透传语义全部复用。上游显式标注 JSON 的场合尊重原值，不做重打。
-    let response =
-        if is_stream && response.status().is_success() && response.content_type().is_none() {
-            let status = response.status();
-            let mut headers = response.headers().clone();
-            headers.insert(
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderValue::from_static("text/event-stream"),
-            );
-            // 缓冲体自带的实体头与流式转发冲突（hyper 会自行分帧），必须摘除。
-            headers.remove(axum::http::header::CONTENT_LENGTH);
-            headers.remove(axum::http::header::CONTENT_ENCODING);
-            log::info!(
-                "[{}] 上游对 stream 请求返回未标记 Content-Type 的缓冲体，按 SSE 透传",
-                ctx.tag
-            );
-            super::hyper_client::ProxyResponse::streamed(status, headers, response.bytes_stream())
-        } else {
-            response
-        };
+    let response = retag_unlabelled_stream_sse(response, is_stream, ctx.tag);
 
     process_response(
         response,
@@ -984,6 +959,34 @@ async fn handle_responses_for_app(
         connection_guard,
     )
     .await
+}
+
+/// OpenAI Codex 后端在安全缓冲（响应头 x-codex-safety-buffering-enabled）等
+/// 场景会把 stream:true 的 SSE 结果整包返回且不带 Content-Type（与 Claude 侧
+/// #2234 的"未标记 SSE 体"同源）。is_sse() 因此判否，本机与共享下游都会按
+/// 非流式处理：usage 解析失败记 0 token（共享双方 Token 统计全为 0 的根因），
+/// 客户端也拿不到 text/event-stream。请求明确要求流式且上游成功、却又完全
+/// 没给 Content-Type 时，重打 SSE 头交还既有流式管线——事件解析、usage
+/// 提取、透传语义全部复用。上游显式标注 JSON 的场合尊重原值，不做重打。
+fn retag_unlabelled_stream_sse(
+    response: super::hyper_client::ProxyResponse,
+    is_stream: bool,
+    tag: &str,
+) -> super::hyper_client::ProxyResponse {
+    if !is_stream || !response.status().is_success() || response.content_type().is_some() {
+        return response;
+    }
+    let status = response.status();
+    let mut headers = response.headers().clone();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    // 缓冲体自带的实体头与流式转发冲突（hyper 会自行分帧），必须摘除。
+    headers.remove(axum::http::header::CONTENT_LENGTH);
+    headers.remove(axum::http::header::CONTENT_ENCODING);
+    log::info!("[{tag}] 上游对 stream 请求返回未标记 Content-Type 的缓冲体，按 SSE 透传");
+    super::hyper_client::ProxyResponse::streamed(status, headers, response.bytes_stream())
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -2859,8 +2862,8 @@ mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        responses_sse_to_response_value, retag_unlabelled_stream_sse,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use bytes::Bytes;
@@ -2868,6 +2871,86 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    fn sse_body() -> bytes::Bytes {
+        bytes::Bytes::from("data: {\"type\":\"response.created\"}\n\ndata: [DONE]\n\n")
+    }
+
+    #[tokio::test]
+    async fn retags_unlabelled_buffered_sse_for_stream_requests() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("content-length", http::HeaderValue::from_static("48"));
+        let response = super::super::hyper_client::ProxyResponse::buffered(
+            http::StatusCode::OK,
+            headers,
+            sse_body(),
+        );
+
+        let retagged = retag_unlabelled_stream_sse(response, true, "Codex");
+        assert_eq!(retagged.status(), http::StatusCode::OK);
+        assert_eq!(
+            retagged.content_type(),
+            Some("text/event-stream"),
+            "missing content-type must be rewritten for stream requests"
+        );
+        assert!(
+            retagged.headers().get("content-length").is_none(),
+            "buffered entity header conflicts with stream framing"
+        );
+        // 体内容原样保留（读出全部字节比较）
+        use futures::StreamExt as _;
+        let chunks: Vec<_> = retagged.bytes_stream().collect().await;
+        let collected: Vec<u8> = chunks
+            .into_iter()
+            .flat_map(|chunk| chunk.unwrap().to_vec())
+            .collect();
+        assert_eq!(collected, sse_body().to_vec());
+    }
+
+    #[tokio::test]
+    async fn retag_respects_explicit_json_content_type() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        let response = super::super::hyper_client::ProxyResponse::buffered(
+            http::StatusCode::OK,
+            headers,
+            bytes::Bytes::from("{}"),
+        );
+        let unchanged = retag_unlabelled_stream_sse(response, true, "Codex");
+        assert_eq!(unchanged.content_type(), Some("application/json"));
+    }
+
+    #[tokio::test]
+    async fn retag_skips_non_stream_and_error_status() {
+        let kept = retag_unlabelled_stream_sse(
+            super::super::hyper_client::ProxyResponse::buffered(
+                http::StatusCode::OK,
+                http::HeaderMap::new(),
+                sse_body(),
+            ),
+            false,
+            "Codex",
+        );
+        assert!(kept.content_type().is_none(), "non-stream stays untouched");
+
+        let kept_err = retag_unlabelled_stream_sse(
+            super::super::hyper_client::ProxyResponse::buffered(
+                http::StatusCode::BAD_GATEWAY,
+                http::HeaderMap::new(),
+                bytes::Bytes::from("{}"),
+            ),
+            true,
+            "Codex",
+        );
+        assert_eq!(kept_err.status(), http::StatusCode::BAD_GATEWAY);
+        assert!(
+            kept_err.content_type().is_none(),
+            "error status stays untouched"
+        );
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

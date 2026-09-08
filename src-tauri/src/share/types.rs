@@ -97,7 +97,7 @@ impl RoutePreference {
 }
 
 /// 单个 peer 的状态（展示用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareProviderInfo {
     /// Provider 所属应用（codex/claude/gemini/grokbuild）
@@ -111,6 +111,10 @@ pub struct ShareProviderInfo {
     /// Provider 当前配置的默认模型。旧节点未通告时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 消费方本地统计：本配额周期内经「该节点的此 Provider」消费的 token 数。
+    /// 仅由消费方 get_status 填充；出借方公告从不携带（序列化时省略）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_tokens: Option<i64>,
     /// 安全认证能力标记；不包含账号 ID、邮箱或 token。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<String>,
@@ -256,5 +260,38 @@ mod tests {
 
         assert_eq!(info.default_model, None);
         assert_eq!(info.auth_mode, None);
+    }
+
+    /// 公告线格式往返：所有可选字段（含 fork 新增）序列化→反序列化不丢；
+    /// 消费方填充字段（used_tokens）不出现在出借方公告 JSON 里。
+    #[test]
+    fn share_provider_info_roundtrip_preserves_all_optional_fields() {
+        let info = ShareProviderInfo {
+            app: "codex".to_string(),
+            provider_id: "zhipu-1".to_string(),
+            name: "智谱".to_string(),
+            models: vec!["glm-5.3".to_string()],
+            default_model: Some("glm-5.3".to_string()),
+            used_tokens: None,
+            auth_mode: Some("managed_oauth".to_string()),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        // 出借方公告从不携带消费方统计字段
+        assert!(!json.contains("usedTokens"));
+        assert!(!json.contains("used_tokens"));
+        let back: ShareProviderInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, info);
+
+        // 旧节点公告（缺一切可选字段）仍可解析——向后兼容
+        let legacy = serde_json::json!({
+            "app": "codex",
+            "providerId": "zhipu-1",
+            "name": "智谱",
+            "models": ["glm-5.3"],
+        });
+        let parsed: ShareProviderInfo = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.default_model, None);
+        assert_eq!(parsed.auth_mode, None);
+        assert_eq!(parsed.used_tokens, None);
     }
 }

@@ -8,6 +8,8 @@ export interface ShareProviderInfo {
   models: string[];
   /** Provider 当前配置的默认模型；旧版节点可能不通告。 */
   defaultModel?: string | null;
+  /** 消费方本地统计：本周期经该节点此 Provider 消费的 token 数（公告不携带）。 */
+  usedTokens?: number | null;
   /** 安全认证能力标记，不包含账号信息。 */
   authMode?: "managed_oauth" | null;
 }

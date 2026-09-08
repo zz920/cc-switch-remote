@@ -3287,8 +3287,8 @@
       "description": "ユーザーモードでは、ローカル Provider とネットワークノードの {{app}} Provider を切り替えられます。",
       "active": "使用中",
       "waiting": "選択してください",
-      "total": "合計: 0",
-      "used": "使用済み: 0",
+      "total": "合計: {{total}}",
+      "used": "使用済み: {{used}}",
       "dragHint": "ドラッグして共有 Provider の順序を調整",
       "noneAvailable": "現在 {{app}} を提供するオンラインノードはありません",
       "providerCount": "{{count}} Provider",
@@ -3304,7 +3304,8 @@
       "localHidden": "ユーザーモードでは、ローカル Provider または共有ネットワーク Provider を現在のルートとして使用できます。",
       "proxyRequired": "{{app}} のローカルルート引き継ぎを有効にすると共有ネットワークを利用できます。",
       "openRouting": "ルートを設定",
-      "managedOauthModel": "ChatGPT アカウントの動的モデル"
+      "managedOauthModel": "ChatGPT アカウントの動的モデル",
+      "quotaIsPeerLevel": "クォータはノード単位。プロバイダー行の使用量は所属ノードの消費です"
     },
     "status": {
       "connected": "接続中",

@@ -3287,8 +3287,8 @@
       "description": "User mode can switch between local Providers and {{app}} Providers offered by network peers.",
       "active": "In use",
       "waiting": "Available to configure",
-      "total": "Total: 0",
-      "used": "Used: 0",
+      "total": "Total: {{total}}",
+      "used": "Used: {{used}}",
       "dragHint": "Drag to adjust shared Provider order",
       "noneAvailable": "No online peer currently provides a usable Provider for {{app}}.",
       "providerCount": "{{count}} Provider(s)",
@@ -3304,7 +3304,8 @@
       "localHidden": "In User mode, either a local Provider or a Share Network Provider can be the active route.",
       "proxyRequired": "Shared Providers are selected, but {{app}} must enable local routing takeover before requests can use the share network.",
       "openRouting": "Configure Routing",
-      "managedOauthModel": "Dynamic ChatGPT account models"
+      "managedOauthModel": "Dynamic ChatGPT account models",
+      "quotaIsPeerLevel": "Quota is per node; a provider row shows its node's usage"
     },
     "status": {
       "connected": "Connected",
