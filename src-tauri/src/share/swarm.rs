@@ -128,8 +128,12 @@ pub fn start_swarm(
 
     let mut swarm = match kind {
         TransportKind::Real => {
-            let quic = quic::tokio::Transport::new(quic::Config::new(&keypair))
-                .map(|(peer, conn), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(conn)));
+            // dns 包装使 /dns4/ 域名形式的 QUIC relay 地址可拨（域名优先配置）
+            let quic = libp2p::dns::tokio::Transport::system(quic::tokio::Transport::new(
+                quic::Config::new(&keypair),
+            ))
+            .map_err(|e| format!("DNS(quic) transport 初始化失败: {e}"))?
+            .map(|(peer, conn), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(conn)));
             let tcp = libp2p::dns::tokio::Transport::system(tcp::tokio::Transport::new(
                 tcp::Config::default().nodelay(true),
             ))
@@ -148,7 +152,9 @@ pub fn start_swarm(
                 .multiplex(yamux::Config::default())
                 .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)));
 
-            let transport = OrTransport::new(quic, OrTransport::new(tcp, relayed))
+            // relay client 传输层必须位于 OrTransport 链首位，circuit 地址
+            // 才能被正确认领（对齐 rust-libp2p 官方 relay 示例的组网方式）。
+            let transport = OrTransport::new(relayed, OrTransport::new(quic, tcp))
                 .map(|either, _| match either {
                     futures::future::Either::Left((peer, muxer)) => (peer, muxer),
                     futures::future::Either::Right(futures::future::Either::Left((
@@ -192,7 +198,7 @@ pub fn start_swarm(
                 )
                 .multiplex(yamux::Config::default())
                 .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)));
-            let transport = OrTransport::new(memory, relayed)
+            let transport = OrTransport::new(relayed, memory)
                 .map(|either, _| match either {
                     futures::future::Either::Left((peer, muxer)) => (peer, muxer),
                     futures::future::Either::Right((peer, muxer)) => (peer, muxer),
@@ -632,8 +638,18 @@ fn peer_candidates(
             .with(Protocol::P2p(peer));
         candidates.push(circuit);
     }
+    // 拨号优先级：IPv4 直连 QUIC > IPv4 直连 TCP > IPv6 直连 QUIC > IPv6 直连
+    // TCP > 中继。家用宽带 IPv6 覆盖参差（无路由/绕路），IPv4 优先能把无效
+    // IPv6 尝试的等待时间挪到兜底位置；中继永远最后。
     candidates.sort_by_key(|addr| {
+        let ipv4 = addr.iter().any(|p| matches!(p, Protocol::Ip4(_)));
         if is_relay_addr(addr) {
+            if is_quic_addr(addr) {
+                4
+            } else {
+                5
+            }
+        } else if !ipv4 {
             if is_quic_addr(addr) {
                 2
             } else {
