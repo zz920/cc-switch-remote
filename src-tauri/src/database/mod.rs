@@ -42,7 +42,7 @@ pub(crate) use dao::proxy::{
 };
 #[allow(unused_imports)]
 pub use dao::share::ShareBlockedPeerRow;
-pub use dao::share::{lend_provider_id, ShareNetworkRow};
+pub use dao::share::{lend_provider_id, ShareNetworkRow, SHARE_REMOTE_PROVIDER_PREFIX};
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 

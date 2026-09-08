@@ -37,6 +37,7 @@ use tokio::sync::{oneshot, RwLock as AsyncRwLock};
 
 use crate::database::Database;
 use crate::database::ShareNetworkRow;
+use crate::database::SHARE_REMOTE_PROVIDER_PREFIX;
 
 use bridge::BridgeHandle;
 use ingress::AdmissionCtx;
@@ -49,6 +50,8 @@ use types::*;
 
 const ROUTE_TARGETS_SETTING: &str = "share_route_targets";
 const SHARE_MODE_SETTING: &str = "share_mode";
+/// 节点显示名的全局设置键：跨网络/重启保留（用户改过或自动生成过的名字）
+const SHARE_NODE_NAME_SETTING: &str = "share_node_name";
 
 /// 组网管理器（全局单例，存于 AppState）
 #[derive(Clone)]
@@ -537,7 +540,7 @@ impl ShareManager {
         short_code: String,
         expires_at: i64,
     ) {
-        let node_name = self.inner.node_name.read().await.clone();
+        let node_name = self.resolve_node_name().await;
         loop {
             // 已被取消（用户退出/超时清理）
             if self.inner.pending_join.read().await.is_none() {
@@ -628,7 +631,7 @@ impl ShareManager {
                 quota_scope: "daily".to_string(),
                 quota_max_tokens: 0,
                 quota_per_peer: true,
-                node_name: self.inner.node_name.read().await.clone(),
+                node_name: self.resolve_node_name().await,
                 created_at: now,
                 updated_at: now,
             };
@@ -1275,7 +1278,34 @@ impl ShareManager {
     /// 设置节点显示名
     pub async fn set_node_name(&self, name: String) -> Result<(), String> {
         *self.inner.node_name.write().await = name.clone();
+        // 同步落全局设置：退出网络/重启后仍保留用户选择
+        if let Err(e) = self.inner.db.set_setting(SHARE_NODE_NAME_SETTING, &name) {
+            log::warn!("[Share] 保存节点显示名失败: {e}");
+        }
         self.update_network_row(|row| row.node_name = name).await
+    }
+
+    /// 解析节点显示名：已设置直接返回；否则读全局设置，仍无则生成随机名
+    /// 并持久化。生成后落库，保证跨重启/跨请求稳定，用户可随时改。
+    pub async fn resolve_node_name(&self) -> String {
+        {
+            let name = self.inner.node_name.read().await;
+            if !name.trim().is_empty() {
+                return name.clone();
+            }
+        }
+        let stored = self
+            .inner
+            .db
+            .get_setting(SHARE_NODE_NAME_SETTING)
+            .unwrap_or(None)
+            .filter(|s| !s.trim().is_empty());
+        let name = stored.unwrap_or_else(generate_random_node_name);
+        if let Err(e) = self.inner.db.set_setting(SHARE_NODE_NAME_SETTING, &name) {
+            log::warn!("[Share] 保存随机节点名失败: {e}");
+        }
+        *self.inner.node_name.write().await = name.clone();
+        name
     }
 
     async fn update_network_row(&self, f: impl FnOnce(&mut ShareNetworkRow)) -> Result<(), String> {
@@ -1375,6 +1405,15 @@ impl ShareManager {
         let blocked = self.inner.db.list_share_blocked_peers().unwrap_or_default();
         let blocked_set: HashSet<String> = blocked.iter().map(|b| b.peer_id.clone()).collect();
         let relay_peer_id = self.inner.relay_peer_id.read().await.clone();
+        // 路由卡逐行用量：本周期经「share:<peer>:<provider_id>」消费的 token。
+        // 一次查询，按完整 provider_id 建索引。
+        let provider_used: HashMap<String, i64> = self
+            .inner
+            .db
+            .share_remote_provider_tokens_used(usage_since)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
 
         {
             let peers = self.inner.peers.read().await;
@@ -1390,13 +1429,20 @@ impl ShareManager {
                 let (tokens_used, quota_remaining) =
                     quota::peer_quota_status(&self.inner.db, peer_id, &scope, max_tokens)
                         .unwrap_or((0, None));
+                let mut providers = p.providers.clone();
+                for provider in providers.iter_mut() {
+                    let key = provider_usage_key(peer_id, &provider.provider_id);
+                    if let Some(used) = provider_used.get(&key) {
+                        provider.used_tokens = Some(*used);
+                    }
+                }
                 peers_out.push(SharePeerInfo {
                     peer_id: peer_id.clone(),
                     name: p.name.clone(),
                     online: p.online,
                     direct: p.direct,
                     shared_apps: p.shared_apps.clone(),
-                    providers: p.providers.clone(),
+                    providers,
                     tokens_used,
                     quota_remaining,
                     is_blocked: blocked_set.contains(peer_id),
@@ -2103,6 +2149,28 @@ fn normalize_relay_addr_list(value: Option<&str>) -> Result<Option<String>, Stri
     }
 }
 
+/// 随机节点名字母表：大写字母 + 数字，剔除易混淆字符（I/O/0/1）。
+const NODE_NAME_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/// 生成 16 位随机节点显示名（大写字母 + 数字，如 `7KQ2M3XVA9BC4DEF`）。
+pub fn generate_random_node_name() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..16)
+        .map(|_| {
+            let index = rng.gen_range(0..NODE_NAME_ALPHABET.len());
+            NODE_NAME_ALPHABET[index] as char
+        })
+        .collect()
+}
+
+/// 消费侧请求日志的 provider_id 形态：`share:<peer_id>:<provider_id>`。
+/// 必须与 DAO 聚合（share_remote_provider_tokens_used 的 LIKE 前缀）严格一致，
+/// 抽成函数供两侧共用并有单测对齐（曾因少一个冒号导致统计恒为 0）。
+fn provider_usage_key(peer_id: &str, provider_id: &str) -> String {
+    format!("{SHARE_REMOTE_PROVIDER_PREFIX}:{peer_id}:{provider_id}")
+}
+
 fn load_global_relay_addr() -> Option<String> {
     std::fs::read_to_string(config::relay_config_path())
         .ok()
@@ -2125,6 +2193,76 @@ fn join_response_timeout(expires_at: i64) -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_node_name_shape_and_variety() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..32 {
+            let name = generate_random_node_name();
+            // 16 位、大写字母 + 数字（剔除易混淆字符）
+            assert_eq!(name.len(), 16, "16 chars: {name}");
+            assert!(
+                name.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+                "uppercase alnum only: {name}"
+            );
+            assert!(!name.contains('I') && !name.contains('O'));
+            assert!(!name.contains('0') && !name.contains('1'));
+            seen.insert(name);
+        }
+        // 32 次抽样互不重复（32^16 空间，随机性健全性）
+        assert_eq!(seen.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn resolve_node_name_generates_persists_and_honors_override() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        let oauth = Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                temp.path().to_path_buf(),
+            ),
+        );
+        let manager = ShareManager::new(db.clone(), oauth);
+
+        // 初始为空 → 自动生成并持久化
+        let first = manager.resolve_node_name().await;
+        assert!(!first.trim().is_empty());
+        // 第二次解析返回同一名字（内存缓存）
+        assert_eq!(manager.resolve_node_name().await, first);
+        // 设置里已落库
+        assert_eq!(
+            db.get_setting(SHARE_NODE_NAME_SETTING).unwrap().as_deref(),
+            Some(first.as_str())
+        );
+
+        // 用户改名：生效且持久化（模拟重启后从设置读取）
+        manager.set_node_name("我的节点".to_string()).await.ok();
+        assert_eq!(manager.resolve_node_name().await, "我的节点");
+        let temp2 = tempfile::tempdir().unwrap();
+        let oauth2 = Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                temp2.path().to_path_buf(),
+            ),
+        );
+        let manager2 = ShareManager::new(db.clone(), oauth2);
+        assert_eq!(manager2.resolve_node_name().await, "我的节点");
+    }
+
+    #[test]
+    fn provider_usage_key_matches_dao_aggregation_shape() {
+        // get_status 的查询键必须与 DAO 聚类的 LIKE 前缀形态一致：
+        // share:<peer_id>:<provider_id>（曾因少一个冒号导致统计恒为 0）
+        let key = provider_usage_key("12D3KooWabc", "zhipu-1");
+        assert_eq!(key, "share:12D3KooWabc:zhipu-1");
+        // 与 DAO 侧的 LIKE 前缀（share:%）按相同首段开始，避免两侧形态漂移
+        assert!(key.starts_with(crate::database::SHARE_REMOTE_PROVIDER_PREFIX));
+        assert_eq!(
+            key.matches(':').count(),
+            2,
+            "exactly two separators: share:<peer>:<provider>"
+        );
+    }
 
     #[test]
     fn relay_config_prefers_quic_and_keeps_tcp_fallback() {

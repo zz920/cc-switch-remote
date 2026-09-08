@@ -265,49 +265,54 @@ function JoinedView({
         <p className="text-xs font-medium text-muted-foreground">
           {t("share.peers.title")}
         </p>
-        {status.peers.length === 0 ? (
+        {/* 只展示在线节点：退网/离线的节点不再以"离线"形态滞留列表 */}
+        {status.peers.filter((peer) => peer.online).length === 0 ? (
           <p className="text-xs text-muted-foreground">
             {t("share.peers.empty")}
           </p>
         ) : (
           <div className="space-y-1.5">
-            {status.peers.map((peer) => (
-              <div
-                key={peer.peerId}
-                className="flex items-center justify-between gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-sm"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-                      peer.online ? "bg-emerald-500" : "bg-muted-foreground/40"
-                    }`}
-                  />
-                  <span
-                    className="truncate font-medium"
-                    title={peer.name || undefined}
-                  >
-                    {peer.name ||
-                      t("share.peers.unnamed", {
-                        defaultValue: "未命名节点",
-                      })}
-                  </span>
-                  <span className="flex-shrink-0 text-xs text-muted-foreground">
-                    {peer.online
-                      ? peer.direct
-                        ? t("share.peers.direct")
-                        : t("share.peers.relay")
-                      : t("share.peers.offline")}
-                  </span>
+            {status.peers
+              .filter((peer) => peer.online)
+              .map((peer) => (
+                <div
+                  key={peer.peerId}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-sm"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+                        peer.online
+                          ? "bg-emerald-500"
+                          : "bg-muted-foreground/40"
+                      }`}
+                    />
+                    <span
+                      className="truncate font-medium"
+                      title={peer.name || undefined}
+                    >
+                      {peer.name ||
+                        t("share.peers.unnamed", {
+                          defaultValue: "未命名节点",
+                        })}
+                    </span>
+                    <span className="flex-shrink-0 text-xs text-muted-foreground">
+                      {peer.online
+                        ? peer.direct
+                          ? t("share.peers.direct")
+                          : t("share.peers.relay")
+                        : t("share.peers.offline")}
+                    </span>
+                  </div>
+                  <div className="flex flex-shrink-0 flex-wrap justify-end gap-1">
+                    {peer.sharedApps.map((app) => (
+                      <Badge key={app} variant="outline" className="text-xs">
+                        {getAppLabel(app)}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex flex-shrink-0 flex-wrap justify-end gap-1">
-                  {peer.sharedApps.map((app) => (
-                    <Badge key={app} variant="outline" className="text-xs">
-                      {getAppLabel(app)}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </div>

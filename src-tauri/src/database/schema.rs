@@ -3347,6 +3347,69 @@ impl Database {
 mod tests {
     use super::*;
 
+    /// 迁移矩阵：本 fork 的 v18（已建组网表）→ v19 补游标列、组网表保留
+    #[test]
+    fn migrate_v18_fork_shape_to_v19_keeps_share_tables_and_adds_cursors() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        Database::create_tables_on_conn(&conn).unwrap();
+        // 制造 fork 形态的 v18：全新库全链迁移到 18 后停住
+        Database::set_user_version(&conn, 18).unwrap();
+        Database::apply_schema_migrations_on_conn(&conn).unwrap();
+        assert_eq!(Database::get_user_version(&conn).unwrap(), 19);
+        let has = |table: &str, column: &str| -> bool {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}'"
+                ))
+                .unwrap();
+            stmt.exists([]).unwrap()
+        };
+        assert!(has("share_network", "share_id"), "share tables survive");
+        assert!(has("share_blocked_peers", "peer_id"), "blocklist survives");
+        assert!(
+            has("session_log_sync", "last_byte_offset"),
+            "cursor col added"
+        );
+        assert!(has("session_log_sync", "last_tail_fingerprint"));
+    }
+
+    /// 迁移矩阵：上游 cc-switch v3.20.1 的 v18（只有游标列、没有组网表）→
+    /// v19 必须幂等补建组网表，否则该来源库升级后 share 功能无声缺失
+    #[test]
+    fn migrate_v18_upstream_shape_to_v19_recreates_share_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // 手工搭上游 v18 形态：有 session_log_sync（含游标列）、无组网表
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER,
+                last_tail_fingerprint INTEGER
+            );
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .unwrap();
+        Database::set_user_version(&conn, 18).unwrap();
+        Database::apply_schema_migrations_on_conn(&conn).unwrap();
+        assert_eq!(Database::get_user_version(&conn).unwrap(), 19);
+        assert!(
+            Database::table_exists(&conn, "share_network").unwrap(),
+            "share_network must be recreated for upstream-shaped v18 dbs"
+        );
+        assert!(Database::table_exists(&conn, "share_blocked_peers").unwrap());
+        // 游标列不重复添加
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('session_log_sync')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(cols.iter().filter(|c| *c == "last_byte_offset").count(), 1);
+    }
+
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;

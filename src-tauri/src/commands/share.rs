@@ -15,12 +15,12 @@ pub async fn share_create_network(
     let name = node_name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| {
-            // 默认节点名：主机名，退化为“未命名节点”
+            // 默认节点名：优先主机名；不可用时生成随机名（用户可改）
             hostname::get()
                 .ok()
                 .and_then(|h| h.into_string().ok())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "未命名节点".to_string())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(crate::share::generate_random_node_name)
         });
     state.share_manager.create_network(name).await
 }

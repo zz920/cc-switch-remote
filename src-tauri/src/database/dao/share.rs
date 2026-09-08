@@ -264,6 +264,34 @@ impl Database {
     ///
     /// 消费侧合成 provider_id 形如 `share:<peer>`；成功请求的 token 总量
     /// 与出借侧保持同一口径：input + output + cache_read + cache_creation。
+    /// 消费侧按完整 provider_id（`share:<peer>:<provider_id>`）聚合的共享消费
+    /// token 数。供路由卡逐行展示「该节点的此供应商已用了多少」。
+    pub fn share_remote_provider_tokens_used(
+        &self,
+        since_epoch: i64,
+    ) -> Result<Vec<(String, i64)>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let like = format!("{SHARE_REMOTE_PROVIDER_PREFIX}:%");
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, COALESCE(SUM(
+                    input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
+                 ), 0) AS total
+                 FROM proxy_request_logs
+                 WHERE provider_id LIKE ?1 AND created_at >= ?2 AND status_code < 400
+                 GROUP BY provider_id",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like, since_epoch], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(rows)
+    }
+
     pub fn share_consumed_tokens(&self, since_epoch: i64) -> Result<i64, AppError> {
         let conn = lock_conn!(self.conn);
         let like = format!("{SHARE_REMOTE_PROVIDER_PREFIX}:%");
@@ -364,5 +392,45 @@ mod tests {
         assert_eq!(db.share_consumed_tokens(0).unwrap(), 46);
         // 从 epoch 150 起仅 r5
         assert_eq!(db.share_consumed_tokens(150).unwrap(), 16);
+    }
+
+    #[test]
+    fn remote_provider_tokens_group_by_full_provider_id() {
+        let db = Database::memory().expect("memory db");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens,
+                    latency_ms, status_code, created_at
+                 ) VALUES
+                    ('c1', 'share:peer-a:zhipu', 'codex', 'glm-5.3', 100, 50, 10, 5, 1, 200, 100),
+                    ('c2', 'share:peer-a:zhipu', 'codex', 'glm-5.3', 1, 1, 0, 0, 1, 200, 150),
+                    ('c3', 'share:peer-a:official', 'codex', 'gpt', 7, 3, 0, 0, 1, 200, 100),
+                    ('c4', 'share:peer-b:zhipu', 'codex', 'glm-5.3', 40, 0, 0, 0, 1, 200, 100),
+                    ('c5', 'share:peer-b:zhipu', 'codex', 'glm-5.3', 999, 999, 0, 0, 1, 502, 100),
+                    ('c6', 'sharelend:peer-b:zhipu', 'codex', 'glm-5.3', 500, 0, 0, 0, 1, 200, 100)",
+                [],
+            )
+            .unwrap();
+        }
+        let map: std::collections::HashMap<_, _> = db
+            .share_remote_provider_tokens_used(0)
+            .unwrap()
+            .into_iter()
+            .collect();
+        // 同 (peer, provider) 跨请求累加；失败行(c5)与出借侧行(c6)不计
+        assert_eq!(map.get("share:peer-a:zhipu"), Some(&167));
+        assert_eq!(map.get("share:peer-a:official"), Some(&10));
+        assert_eq!(map.get("share:peer-b:zhipu"), Some(&40));
+        assert!(!map.contains_key("sharelend:peer-b:zhipu"));
+        // 周期过滤：epoch 150 起 peer-a:zhipu 只剩 c2
+        let since: std::collections::HashMap<_, _> = db
+            .share_remote_provider_tokens_used(150)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(since.get("share:peer-a:zhipu"), Some(&2));
     }
 }

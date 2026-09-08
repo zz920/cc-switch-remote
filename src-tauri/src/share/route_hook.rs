@@ -427,6 +427,7 @@ mod tests {
             shared_apps: vec!["codex".to_string()],
             providers: vec![
                 ShareProviderInfo {
+                    used_tokens: None,
                     app: "codex".to_string(),
                     provider_id: "zhipu".to_string(),
                     name: "智谱".to_string(),
@@ -435,6 +436,7 @@ mod tests {
                     auth_mode: None,
                 },
                 ShareProviderInfo {
+                    used_tokens: None,
                     app: "codex".to_string(),
                     provider_id: "kimi".to_string(),
                     name: "Kimi".to_string(),

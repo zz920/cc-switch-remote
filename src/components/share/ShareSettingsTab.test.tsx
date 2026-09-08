@@ -1,14 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShareStatus } from "@/types/share";
 import { ShareSettingsTab } from "./ShareSettingsTab";
 
 const mocks = vi.hoisted(() => ({
   setRelayAddr: vi.fn().mockResolvedValue(undefined),
+  providersByApp: {} as Record<string, Record<string, unknown>>,
   status: {
-    joined: false,
+    joined: false as boolean,
     routePreference: "local_only",
-    mode: "consumer",
+    mode: "consumer" as ShareStatus["mode"],
     routeTargets: {},
     nodeName: "consumer-test",
     relayAddr: "",
@@ -39,7 +41,18 @@ vi.mock("@/components/share/ShareNetworkSection", () => ({
 }));
 
 vi.mock("@/lib/query/queries", () => ({
-  useProvidersQuery: () => ({ data: { providers: {} } }),
+  useProvidersQuery: (appId: string) => ({
+    data: { providers: mocks.providersByApp[appId] ?? {} },
+  }),
+}));
+
+vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
+  useCodexOauth: () => ({
+    accounts: [],
+    isStatusSuccess: true,
+    isAuthenticated: false,
+    defaultAccountId: null,
+  }),
 }));
 
 vi.mock("@/lib/query/share", () => {
@@ -85,5 +98,65 @@ describe("ShareSettingsTab relay configuration", () => {
     await waitFor(() => {
       expect(mocks.setRelayAddr).toHaveBeenCalledWith(relayAddr);
     });
+  });
+});
+
+describe("ShareSettingsTab shared providers official gating", () => {
+  beforeEach(() => {
+    mocks.providersByApp = {
+      codex: {
+        "codex-official": {
+          id: "codex-official",
+          name: "OpenAI Official",
+          category: "official",
+          meta: {},
+        },
+      },
+      claude: {
+        "claude-official": {
+          id: "claude-official",
+          name: "Claude Official",
+          category: "official",
+          meta: {},
+        },
+      },
+    };
+    mocks.status.joined = true;
+    mocks.status.mode = "provider";
+    mocks.status.peers = [];
+  });
+
+  afterEach(() => {
+    mocks.status.joined = false;
+    mocks.status.mode = "consumer";
+    mocks.providersByApp = {};
+  });
+
+  it("offers bind/login CTA only on codex official, plain badge elsewhere", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ShareSettingsTab />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText("共享与配额"));
+
+    const codexRow = (await screen.findByText("OpenAI Official")).closest(
+      "label",
+    )!;
+    // 未绑定的 OpenAI Official：行动按钮（无可用账号 → 去登录文案键）
+    expect(codexRow.querySelector("button")?.textContent).toBe(
+      "share.settings.sharedProviders.goLogin",
+    );
+
+    // 其他应用的 Official：只有"不可共享"徽标，没有任何按钮
+    const claudeRow = screen.getByText("Claude Official").closest("label")!;
+    expect(claudeRow.textContent).toContain(
+      "share.settings.sharedProviders.officialBadge",
+    );
+    expect(claudeRow.querySelector("button")).toBeNull();
   });
 });

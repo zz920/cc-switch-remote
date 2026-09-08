@@ -3288,8 +3288,8 @@
       "description": "使用者模式可在本機 Provider 與網路節點提供的 {{app}} Provider 之間切換。",
       "active": "正在使用",
       "waiting": "可設定",
-      "total": "總: 0",
-      "used": "已使用: 0",
+      "total": "總: {{total}}",
+      "used": "已使用: {{used}}",
       "dragHint": "拖曳調整共享 Provider 順序",
       "noneAvailable": "目前沒有在線節點為 {{app}} 提供可用 Provider。",
       "providerCount": "{{count}} 個 Provider",
@@ -3305,7 +3305,8 @@
       "localHidden": "使用者模式下，本機 Provider 與共享網路 Provider 均可作為目前路由。",
       "proxyRequired": "已選擇共享 Provider，但 {{app}} 需要先開啟本地路由接管，請求才會經過共享網路。",
       "openRouting": "設定路由",
-      "managedOauthModel": "ChatGPT 帳號動態模型"
+      "managedOauthModel": "ChatGPT 帳號動態模型",
+      "quotaIsPeerLevel": "配額為節點級，供應商行的用量為其歸屬節點的佔用"
     },
     "status": {
       "connected": "已連線",
