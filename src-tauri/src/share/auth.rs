@@ -45,7 +45,7 @@ pub fn generate_short_code() -> String {
 pub fn normalize_share_id(share_id: &str) -> String {
     share_id
         .trim()
-        .trim_start_matches("tokentap://join?id=")
+        .trim_start_matches("cc-switch-remote://join?id=")
         .trim()
         .replace('-', "")
         .to_uppercase()

@@ -3321,7 +3321,7 @@
       "dialogTitle": "共有ネットワークに参加",
       "dialogDescription": "ネットワーク ID を入力して参加申請を送信し、管理者の承認を待ちます。",
       "shareIdLabel": "ネットワーク ID",
-      "shareIdPlaceholder": "ネットワーク ID または tokentap://join?id= リンク",
+      "shareIdPlaceholder": "ネットワーク ID または cc-switch-remote://join?id= リンク",
       "shareIdDescription": "招待リンクをそのまま貼り付けても、ネットワーク ID が自動で抽出されます。",
       "relayAddrLabel": "リレーアドレス",
       "relayAddrPlaceholder": "例：/ip4/192.168.1.100/tcp/15720/p2p/...",

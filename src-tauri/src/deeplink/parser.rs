@@ -1,6 +1,6 @@
 //! Deep link URL parser
 //!
-//! Parses tokentap:// URLs into DeepLinkImportRequest structures.
+//! Parses cc-switch-remote:// URLs into DeepLinkImportRequest structures.
 
 use super::utils::validate_url;
 use super::DeepLinkImportRequest;
@@ -8,10 +8,10 @@ use crate::error::AppError;
 use std::collections::HashMap;
 use url::Url;
 
-/// Parse a tokentap:// URL into a DeepLinkImportRequest
+/// Parse a cc-switch-remote:// URL into a DeepLinkImportRequest
 ///
 /// Expected format:
-/// tokentap://v1/import?resource={type}&...
+/// cc-switch-remote://v1/import?resource={type}&...
 pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppError> {
     // Parse URL
     let url = Url::parse(url_str)
@@ -19,9 +19,9 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
 
     // Validate scheme
     let scheme = url.scheme();
-    if scheme != "tokentap" {
+    if scheme != "cc-switch-remote" {
         return Err(AppError::InvalidInput(format!(
-            "Invalid scheme: expected 'tokentap', got '{scheme}'"
+            "Invalid scheme: expected 'cc-switch-remote', got '{scheme}'"
         )));
     }
 

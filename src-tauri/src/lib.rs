@@ -239,7 +239,7 @@ fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> b
     max_level.to_level().is_some_and(|maximum| level <= maximum)
 }
 
-/// 统一处理 tokentap:// 深链接 URL
+/// 统一处理 cc-switch-remote:// 深链接 URL
 ///
 /// - 解析 URL
 /// - 向前端发射 `deeplink-import` / `deeplink-error` 事件
@@ -250,7 +250,7 @@ fn handle_deeplink_url(
     focus_main_window: bool,
     source: &str,
 ) -> bool {
-    if !url_str.starts_with("tokentap://") {
+    if !url_str.starts_with("cc-switch-remote://") {
         return false;
     }
 
@@ -1068,7 +1068,7 @@ pub fn run() {
                         log::debug!("  URL[{i}]: {}", url_for_log(url_str));
 
                         if handle_deeplink_url(&app_handle, url_str, true, "on_open_url") {
-                            break; // Process only first tokentap:// URL
+                            break; // Process only first cc-switch-remote:// URL
                         }
                     }
                 }
@@ -1133,7 +1133,7 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
-            // 组网（TokenTap Share）：接线 ProxyService/AppHandle 并从数据库恢复网络
+            // 组网（cc-switch-remote Share）：接线 ProxyService/AppHandle 并从数据库恢复网络
             {
                 let share_manager = app.state::<AppState>().share_manager.clone();
                 let proxy_service = app.state::<AppState>().proxy_service.clone();
@@ -1831,7 +1831,7 @@ pub fn run() {
                         }
                     }
                 }
-                // 处理通过自定义 URL 协议触发的打开事件（例如 tokentap://...）
+                // 处理通过自定义 URL 协议触发的打开事件（例如 cc-switch-remote://...）
                 RunEvent::Opened { urls } => {
                     if let Some(url) = urls.first() {
                         let url_str = url.to_string();
@@ -1840,7 +1840,7 @@ pub fn run() {
                             url_for_log(&url_str)
                         );
 
-                        if url_str.starts_with("tokentap://") {
+                        if url_str.starts_with("cc-switch-remote://") {
                             if crate::lightweight::is_lightweight_mode() {
                                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
                                 {

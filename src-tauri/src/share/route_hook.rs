@@ -81,24 +81,24 @@ pub fn synthetic_remote_provider(
         "claude" => json!({
             "env": {
                 "ANTHROPIC_BASE_URL": base_url,
-                "ANTHROPIC_AUTH_TOKEN": "tokentap",
+                "ANTHROPIC_AUTH_TOKEN": "cc-switch-remote",
             }
         }),
         "codex" => json!({
-            "auth": { "OPENAI_API_KEY": "tokentap" },
+            "auth": { "OPENAI_API_KEY": "cc-switch-remote" },
             "config": "",
             "base_url": base_url,
         }),
         "gemini" => json!({
             "env": {
                 "GOOGLE_GEMINI_BASE_URL": base_url,
-                "GEMINI_API_KEY": "tokentap",
+                "GEMINI_API_KEY": "cc-switch-remote",
             }
         }),
         // 其余应用（grokbuild/opencode 等）按通用 base_url 形态
         _ => json!({
             "base_url": base_url,
-            "apiKey": "tokentap",
+            "apiKey": "cc-switch-remote",
         }),
     };
     let display = if name.is_empty() {
@@ -128,7 +128,7 @@ pub fn synthetic_remote_provider_for_provider(
         "claude" => json!({
             "env": {
                 "ANTHROPIC_BASE_URL": base_url,
-                "ANTHROPIC_AUTH_TOKEN": "tokentap",
+                "ANTHROPIC_AUTH_TOKEN": "cc-switch-remote",
             }
         }),
         "codex" => {
@@ -148,7 +148,7 @@ pub fn synthetic_remote_provider_for_provider(
                     .or_else(|| provider.models.first().map(String::as_str))
             };
             let mut document = DocumentMut::new();
-            document["model_provider"] = value("tokentap_shared");
+            document["model_provider"] = value("cc-switch-remote-shared");
             if let Some(model) = default_model {
                 document["model"] = value(model);
             }
@@ -157,11 +157,11 @@ pub fn synthetic_remote_provider_for_provider(
             provider_table["base_url"] = value(base_url.clone());
             provider_table["wire_api"] = value("responses");
             let mut providers_table = Table::new();
-            providers_table.insert("tokentap_shared", Item::Table(provider_table));
+            providers_table.insert("cc-switch-remote-shared", Item::Table(provider_table));
             document["model_providers"] = Item::Table(providers_table);
 
             json!({
-                "auth": { "OPENAI_API_KEY": "tokentap" },
+                "auth": { "OPENAI_API_KEY": "cc-switch-remote" },
                 "config": document.to_string(),
                 "base_url": base_url,
                 "modelCatalog": {
@@ -172,12 +172,12 @@ pub fn synthetic_remote_provider_for_provider(
         "gemini" => json!({
             "env": {
                 "GOOGLE_GEMINI_BASE_URL": base_url,
-                "GEMINI_API_KEY": "tokentap",
+                "GEMINI_API_KEY": "cc-switch-remote",
             }
         }),
         _ => json!({
             "base_url": base_url,
-            "apiKey": "tokentap",
+            "apiKey": "cc-switch-remote",
         }),
     };
     let display = if peer_name.is_empty() {
@@ -461,7 +461,7 @@ mod tests {
         assert!(out[0].name.contains("Kimi"));
         let config = out[0].settings_config["config"].as_str().unwrap();
         assert!(config.contains("model = \"moonshot-v1\""));
-        assert!(config.contains("model_provider = \"tokentap_shared\""));
+        assert!(config.contains("model_provider = \"cc-switch-remote-shared\""));
         assert!(config.contains("wire_api = \"responses\""));
     }
 

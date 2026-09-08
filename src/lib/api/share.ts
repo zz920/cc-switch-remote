@@ -8,7 +8,7 @@ import type {
   ShareStatus,
 } from "@/types/share";
 
-/** 组网（TokenTap Share）API */
+/** 组网（cc-switch-remote Share）API */
 export const shareApi = {
   // ========== 网络生命周期 ==========
 

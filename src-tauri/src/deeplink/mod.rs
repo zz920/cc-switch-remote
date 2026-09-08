@@ -1,6 +1,6 @@
 //! Deep link import functionality for CC Switch
 //!
-//! This module implements the tokentap:// protocol for importing configurations
+//! This module implements the cc-switch-remote:// protocol for importing configurations
 //! via deep links. Supports importing:
 //! - Provider configurations (Claude/Codex/Gemini)
 //! - MCP server configurations
@@ -29,7 +29,7 @@ pub use skill::import_skill_from_deeplink;
 
 /// Deep link import request model
 ///
-/// Represents a parsed tokentap:// URL ready for processing.
+/// Represents a parsed cc-switch-remote:// URL ready for processing.
 /// This struct contains all possible fields for all resource types.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -3,7 +3,7 @@
 use libp2p::identity::Keypair;
 use std::path::PathBuf;
 
-/// 身份文件路径：~/.tokentap/share/identity.key
+/// 身份文件路径：~/.cc-switch-remote/share/identity.key
 pub fn identity_path() -> PathBuf {
     super::config::share_data_dir().join("identity.key")
 }

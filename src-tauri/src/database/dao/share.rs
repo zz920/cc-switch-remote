@@ -1,4 +1,4 @@
-//! 组网（TokenTap Share）数据访问层
+//! 组网（cc-switch-remote Share）数据访问层
 //!
 //! - `share_network`：单行网络配置（share id、角色、路由偏好、白名单、限额）
 //! - `share_blocked_peers`：被拉黑的节点

@@ -393,7 +393,7 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
-    /// 组网路由钩子（TokenTap Share）：代理（重）启动时自动安装到新 ProxyServer
+    /// 组网路由钩子（cc-switch-remote Share）：代理（重）启动时自动安装到新 ProxyServer
     route_hook: Arc<RwLock<Option<Arc<dyn crate::proxy::provider_router::RouteHook>>>>,
 }
 
@@ -424,7 +424,7 @@ impl ProxyService {
         }
     }
 
-    /// 设置组网路由钩子（TokenTap Share）
+    /// 设置组网路由钩子（cc-switch-remote Share）
     ///
     /// 代理正在运行时热安装到当前 ProxyServer；未运行时保存，
     /// 下次 `start()` 自动安装到新建的 ProxyServer。

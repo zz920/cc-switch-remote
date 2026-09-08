@@ -49,10 +49,10 @@ import type {
   ShareStatus,
 } from "@/types/share";
 
-/** 从用户输入中提取 share id（支持粘贴完整 tokentap://join?id= 链接） */
+/** 从用户输入中提取 share id（支持粘贴完整 cc-switch-remote://join?id= 链接） */
 export function extractShareId(input: string): string {
   const trimmed = input.trim();
-  const match = trimmed.match(/tokentap:\/\/join\?id=([^\s&]+)/i);
+  const match = trimmed.match(/cc-switch-remote:\/\/join\?id=([^\s&]+)/i);
   if (match) return match[1];
   return trimmed;
 }
@@ -528,7 +528,7 @@ function CreateNetworkDialog({ open, onOpenChange }: CreateNetworkDialogProps) {
     }
   };
 
-  const shareLink = result ? `tokentap://join?id=${result.shareId}` : "";
+  const shareLink = result ? `cc-switch-remote://join?id=${result.shareId}` : "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

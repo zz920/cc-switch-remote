@@ -217,17 +217,18 @@ pub fn start_swarm(
     match kind {
         TransportKind::Real => {
             let port = config::share_p2p_port();
-            let quic_addr = format!("/ip4/0.0.0.0/udp/{port}/quic-v1")
-                .parse()
-                .expect("quic addr");
-            let tcp_addr = format!("/ip4/0.0.0.0/tcp/{port}")
-                .parse()
-                .expect("tcp addr");
-            if let Err(error) = swarm.listen_on(quic_addr) {
-                log::warn!("[Share] QUIC P2P 监听失败（端口 {port}），将依赖 relay: {error}");
-            }
-            if let Err(error) = swarm.listen_on(tcp_addr) {
-                log::warn!("[Share] TCP P2P 监听失败（端口 {port}），将依赖 QUIC/relay: {error}");
+            // 双栈监听：IPv4 通配 + IPv6 通配各自独立注册，任一失败只降级不致命。
+            // IPv6 直连是绕开 NAT 中继的主要途径（国内家宽 IPv6 覆盖良好）。
+            for template in [
+                format!("/ip4/0.0.0.0/udp/{port}/quic-v1"),
+                format!("/ip4/0.0.0.0/tcp/{port}"),
+                format!("/ip6/::/udp/{port}/quic-v1"),
+                format!("/ip6/::/tcp/{port}"),
+            ] {
+                let addr: Multiaddr = template.parse().expect("listen addr");
+                if let Err(error) = swarm.listen_on(addr.clone()) {
+                    log::warn!("[Share] P2P 监听失败（{addr}），其余栈继续: {error}");
+                }
             }
         }
         TransportKind::Memory => {}
@@ -600,6 +601,18 @@ fn ensure_peer_id(addr: Multiaddr, peer: PeerId) -> Option<Multiaddr> {
     }
 }
 
+/// 全局单播 IPv6（排除未指定/回环/组播/fe80::/10 链路本地/fc00::/7 唯一本地）。
+/// 用分段位运算实现，避免 std 尚未稳定的 is_unicast_global。
+fn is_global_unicast_ipv6(ip: std::net::Ipv6Addr) -> bool {
+    if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
+        return false;
+    }
+    let first = ip.segments()[0];
+    let link_local = (first & 0xffc0) == 0xfe80;
+    let unique_local = (first & 0xfe00) == 0xfc00;
+    !link_local && !unique_local
+}
+
 fn peer_candidates(
     registration: &rendezvous::Registration,
     relay_addr: Option<&Multiaddr>,
@@ -719,8 +732,21 @@ async fn handle_swarm_event(
     match event {
         SwarmEvent::NewListenAddr { address, .. } => {
             log::info!("[Share] 监听地址: {address}");
-            // relay 电路地址加入外部地址，供 rendezvous 注册发布
-            if address.iter().any(|p| matches!(p, Protocol::P2pCircuit)) {
+            // 以下地址登记为外部地址供 rendezvous 注册发布：
+            // 1) relay 电路地址；
+            // 2) 全局单播 IPv6 地址（排除 fe80:: 链路本地与 ::1 回环）。IPv6
+            //    可直达的对端据此直连，绕开中继。临时地址（Windows 隐私扩展）
+            //    会轮换导致注册信息短暂过期，代价仅为对端拨号该候选失败后
+            //    顺延到下一候选，由周期注册与 identify 观察自行修正。
+            let is_circuit = address.iter().any(|p| matches!(p, Protocol::P2pCircuit));
+            let is_global_ipv6 = address
+                .iter()
+                .find_map(|p| match p {
+                    Protocol::Ip6(ip) => Some(ip),
+                    _ => None,
+                })
+                .is_some_and(is_global_unicast_ipv6);
+            if is_circuit || is_global_ipv6 {
                 swarm.add_external_address(address);
                 try_register(swarm, state);
             }

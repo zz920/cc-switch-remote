@@ -3321,7 +3321,7 @@
       "dialogTitle": "Join Share Network",
       "dialogDescription": "Enter a network ID to send a join request and wait for the network admin's approval.",
       "shareIdLabel": "Network ID",
-      "shareIdPlaceholder": "Network ID or tokentap://join?id= link",
+      "shareIdPlaceholder": "Network ID or cc-switch-remote://join?id= link",
       "shareIdDescription": "You can paste a full invite link; the network ID is extracted automatically.",
       "relayAddrLabel": "Relay address",
       "relayAddrPlaceholder": "For example, /ip4/192.168.1.100/tcp/15720/p2p/...",

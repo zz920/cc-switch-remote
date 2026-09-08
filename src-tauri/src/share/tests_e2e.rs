@@ -65,7 +65,7 @@ mod tests {
     #[derive(Debug)]
     struct CapturedHeaders {
         authorization: String,
-        tokentap_auth: String,
+        cc_switch_remote_auth: String,
         consumer_credentials: Vec<String>,
     }
 
@@ -84,9 +84,9 @@ mod tests {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
-                    let tokentap_auth = req
+                    let cc_switch_remote_auth = req
                         .headers()
-                        .get("x-tokentap-auth")
+                        .get("x-cc-switch-remote-auth")
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
@@ -110,7 +110,7 @@ mod tests {
                     .collect();
                     captured.lock().unwrap().push(CapturedHeaders {
                         authorization: auth,
-                        tokentap_auth,
+                        cc_switch_remote_auth,
                         consumer_credentials,
                     });
                     axum::Json(json!({
@@ -267,7 +267,7 @@ mod tests {
         let captured = fx.captured.lock().unwrap();
         assert_eq!(captured.len(), 1);
         assert_eq!(captured[0].authorization, "Bearer lender-real-secret-key");
-        assert_eq!(captured[0].tokentap_auth, "");
+        assert_eq!(captured[0].cc_switch_remote_auth, "");
         assert!(
             captured[0].consumer_credentials.is_empty(),
             "消费方认证/账号头不应到达上游: {:?}",

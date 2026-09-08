@@ -351,7 +351,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 组网（TokenTap Share）网络配置：单行表（第一版一个节点只加入一个网络）
+        // 组网（cc-switch-remote Share）网络配置：单行表（第一版一个节点只加入一个网络）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS share_network (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -372,7 +372,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 组网（TokenTap Share）黑名单节点
+        // 组网（cc-switch-remote Share）黑名单节点
         conn.execute(
             "CREATE TABLE IF NOT EXISTS share_blocked_peers (
                 peer_id TEXT PRIMARY KEY,
@@ -577,7 +577,7 @@ impl Database {
                         Self::set_user_version(conn, 17)?;
                     }
                     17 => {
-                        log::info!("迁移数据库从 v17 到 v18（TokenTap Share 组网表）");
+                        log::info!("迁移数据库从 v17 到 v18（cc-switch-remote Share 组网表）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
                     }
@@ -586,7 +586,7 @@ impl Database {
                         Self::migrate_v18_to_v19(conn)?;
                         // 上游 cc-switch v3.20.1 的 v18 库没有组网表（两边的 v18
                         // 编号冲突过）。在 v19 一并幂等补建，保证任何 v18 来源的库
-                        // 升级后 share 功能可用；本 fork 自己的 v18 库则命中 IF NOT
+                        // 升级后 share 功能可用；本项目自己的 v18 库则命中 IF NOT
                         // EXISTS 直接跳过。
                         Self::ensure_share_tables(conn)?;
                         Self::set_user_version(conn, 19)?;
@@ -1628,7 +1628,7 @@ impl Database {
     /// 尾部指纹用于识别外部重写（截断由 size 检测，同尺寸/更大的替换
     /// 只有指纹能发现）。
     /// v18 -> v19: 会话日志字节游标列（上游 cc-switch v3.20.1 的增量扫描；
-    /// 原上游编号 v18，因本 fork 的 v18 已被组网表占用而顺延）
+    /// 原上游编号 v18，因本项目的 v18 已被组网表占用而顺延）
     fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
         // 缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
         if Self::table_exists(conn, "session_log_sync")? {
@@ -1643,7 +1643,7 @@ impl Database {
         Ok(())
     }
 
-    /// v17 -> v18: TokenTap Share 组网表（网络配置单行表 + 节点黑名单）
+    /// v17 -> v18: cc-switch-remote Share 组网表（网络配置单行表 + 节点黑名单）
     fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
         Self::ensure_share_tables(conn)
     }
@@ -3347,7 +3347,7 @@ impl Database {
 mod tests {
     use super::*;
 
-    /// 迁移矩阵：本 fork 的 v18（已建组网表）→ v19 补游标列、组网表保留
+    /// 迁移矩阵：本项目的 v18（已建组网表）→ v19 补游标列、组网表保留
     #[test]
     fn migrate_v18_fork_shape_to_v19_keeps_share_tables_and_adds_cursors() {
         let mut conn = Connection::open_in_memory().unwrap();

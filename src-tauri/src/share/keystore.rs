@@ -5,7 +5,7 @@
 use super::config::share_data_dir;
 use serde::Serialize;
 
-const KEYRING_SERVICE: &str = "tokentap";
+const KEYRING_SERVICE: &str = "cc-switch-remote";
 
 /// key 的实际存储位置（用于 UI 风险提示）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -13,7 +13,7 @@ const KEYRING_SERVICE: &str = "tokentap";
 pub enum KeyStorage {
     /// OS 钥匙串（macOS Keychain / Windows 凭据管理器 / Linux Secret Service）
     Keyring,
-    /// 降级：~/.tokentap/share/secret-<hash>（0600）
+    /// 降级：~/.cc-switch-remote/share/secret-<hash>（0600）
     File,
 }
 

@@ -1,8 +1,8 @@
-//! TokenTap 出借方种子工具（容器化/自动化测试用）
+//! cc-switch-remote 出借方种子工具（容器化/自动化测试用）
 //!
 //! 用法：`seed_lender <seed.json>`
 //!
-//! 在应用数据目录（~/.tokentap）中写入：
+//! 在应用数据目录（~/.cc-switch-remote）中写入：
 //! 1. 一个供应商（provider）
 //! 2. 组网网络配置（share_network，白名单包含该供应商）
 //! 3. share key 降级密钥文件（share/secret-<hash>）

@@ -1815,8 +1815,7 @@ impl RequestForwarder {
                     match token_result {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
-                            // 共享请求不把消费方的会话路由标识带给 Official
-                            // 上游（TokenTap fork 的共享语义）。
+                            // 共享请求不把消费方的会话路由标识带给 Official 上游。
                             should_send_codex_oauth_session_headers =
                                 shared_request_context.is_none();
                             // 本地账号 ID 只用于绑定；ChatGPT-Account-Id 请求头

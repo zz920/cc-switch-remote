@@ -166,7 +166,7 @@ async fn bridge_handler(
 pub fn error_response(status: http::StatusCode, message: &str) -> Response {
     let body = serde_json::json!({
         "error": {
-            "type": "tokentap_share_error",
+            "type": "cc_switch_remote_share_error",
             "message": message,
         }
     });

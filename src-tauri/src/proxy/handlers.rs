@@ -964,7 +964,7 @@ async fn handle_responses_for_app(
 /// OpenAI Codex 后端在安全缓冲（响应头 x-codex-safety-buffering-enabled）等
 /// 场景会把 stream:true 的 SSE 结果整包返回且不带 Content-Type（与 Claude 侧
 /// #2234 的"未标记 SSE 体"同源）。is_sse() 因此判否，本机与共享下游都会按
-/// 非流式处理：usage 解析失败记 0 token（共享双方 Token 统计全为 0 的根因），
+/// 非流式处理：usage 解析失败记 0 token，
 /// 客户端也拿不到 text/event-stream。请求明确要求流式且上游成功、却又完全
 /// 没给 Content-Type 时，重打 SSE 头交还既有流式管线——事件解析、usage
 /// 提取、透传语义全部复用。上游显式标注 JSON 的场合尊重原值，不做重打。
