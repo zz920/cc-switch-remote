@@ -35,8 +35,8 @@ pub const RENDEZVOUS_NAMESPACE_PREFIX: &str = "cc-switch-remote";
 /// QUIC 主选 + TCP 兜底；peer id 由 relay 首次启动生成的持久密钥决定，
 /// 密钥丢失/更换服务器时需同步更新此处。
 pub const DEFAULT_RELAY_ADDRS: &[&str] = &[
-    "/ip4/47.93.197.182/udp/15720/quic-v1/p2p/12D3KooWJviFfoWKwmhamp8Tsrx5GmDgGnoo3BTiAgqaLzRT7Qcz",
-    "/ip4/47.93.197.182/tcp/15720/p2p/12D3KooWJviFfoWKwmhamp8Tsrx5GmDgGnoo3BTiAgqaLzRT7Qcz",
+    "/dns4/tokentap.top/udp/15720/quic-v1/p2p/12D3KooWJviFfoWKwmhamp8Tsrx5GmDgGnoo3BTiAgqaLzRT7Qcz",
+    "/dns4/tokentap.top/tcp/15720/p2p/12D3KooWJviFfoWKwmhamp8Tsrx5GmDgGnoo3BTiAgqaLzRT7Qcz",
 ];
 
 /// HMAC 时间戳窗口（±5 分钟）
