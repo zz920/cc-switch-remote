@@ -199,24 +199,24 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.tokentap)
+/// 获取应用配置目录路径 (~/.cc-switch-remote)
 ///
-/// TokenTap 品牌更名后的默认目录；首次运行时自动从旧目录 ~/.cc-switch 迁移。
+/// 默认目录；首次运行时自动从旧目录 ~/.cc-switch-remote / ~/.cc-switch（按序）迁移。
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
 
-    let default_dir = get_home_dir().join(".tokentap");
+    let default_dir = get_home_dir().join(".cc-switch-remote");
 
-    // 品牌迁移：~/.cc-switch → ~/.tokentap（含真实数据时整体更名，
+    // 品牌迁移：旧目录 → ~/.cc-switch-remote（含真实数据时整体更名，
     // 失败则继续使用旧目录，保证不丢数据）
     if let Some(legacy) = migrate_legacy_app_config_dir(&default_dir) {
         return legacy;
     }
 
-    // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
-    // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
+    // 兼容旧版本：当用户环境存在 `HOME` 且与真实用户目录不同，
+    // 旧版可能在 `HOME/.cc-switch-remote/` 或 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
     #[cfg(windows)]
@@ -226,11 +226,11 @@ pub fn get_app_config_dir() -> PathBuf {
             if let Ok(home_env) = std::env::var("HOME") {
                 let trimmed = home_env.trim();
                 if !trimmed.is_empty() {
-                    for name in [".tokentap", ".cc-switch"] {
+                    for name in [".cc-switch-remote", ".cc-switch-remote", ".cc-switch"] {
                         let legacy_dir = PathBuf::from(trimmed).join(name);
                         if legacy_dir.join("cc-switch.db").exists() {
                             log::info!(
-                                "Detected v3.10.3 legacy database at {}, using it instead of {}",
+                                "Detected legacy database at {}, using it instead of {}",
                                 legacy_dir.display(),
                                 default_dir.display()
                             );
@@ -252,10 +252,10 @@ fn migrate_legacy_app_config_dir(default_dir: &std::path::Path) -> Option<PathBu
     if default_dir.exists() {
         return None;
     }
-    let legacy_dir = get_home_dir().join(".cc-switch");
-    if !legacy_dir.exists() {
-        return None;
-    }
+    let legacy_dir = [".cc-switch-remote", ".cc-switch"].iter().find_map(|name| {
+        let dir = get_home_dir().join(name);
+        dir.exists().then_some(dir)
+    })?;
     // 仅当旧目录包含真实数据时才迁移，避免搬运空目录
     let has_data = legacy_dir.join("cc-switch.db").exists()
         || legacy_dir.join("settings.json").exists()

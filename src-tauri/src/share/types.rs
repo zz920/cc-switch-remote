@@ -1,4 +1,4 @@
-//! 组网（TokenTap Share）前后端共享类型
+//! 组网（cc-switch-remote Share）前后端共享类型
 //!
 //! 全部为 serde camelCase，与前端 TypeScript 类型一一对应。
 

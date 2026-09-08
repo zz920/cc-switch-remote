@@ -3321,7 +3321,7 @@
       "dialogTitle": "加入共享网络",
       "dialogDescription": "输入网络 ID 发起加入申请，等待网络管理员审批。",
       "shareIdLabel": "网络 ID",
-      "shareIdPlaceholder": "网络 ID 或 tokentap://join?id= 链接",
+      "shareIdPlaceholder": "网络 ID 或 cc-switch-remote://join?id= 链接",
       "shareIdDescription": "支持直接粘贴完整邀请链接，将自动提取网络 ID。",
       "relayAddrLabel": "Relay 地址",
       "relayAddrPlaceholder": "例如 /ip4/192.168.1.100/tcp/15720/p2p/...",

@@ -53,7 +53,7 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
 import { useSetRouteTargets, useShareStatus } from "@/lib/query/share";
 
-const SHARED_PROVIDER_SORT_ID = "__tokentap_shared_network_provider__";
+const SHARED_PROVIDER_SORT_ID = "__cc_switch_remote_shared_network_provider__";
 
 function sharedProviderSortStorageKey(appId: AppId) {
   return `provider-list:${appId}:shared-network-index`;

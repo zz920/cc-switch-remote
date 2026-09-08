@@ -22,7 +22,7 @@ pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) ->
 
 /// 路由钩子：在 `select_providers` 完成后对路由列表做后处理
 ///
-/// 用于组网（TokenTap Share）场景：
+/// 用于组网（cc-switch-remote Share）场景：
 /// - 消费侧：向路由列表注入“远端节点”合成供应商（按其路由偏好重排）
 /// - 出借侧：按白名单过滤并克隆出按 peer 归因的合成供应商
 ///
@@ -159,7 +159,7 @@ impl ProviderRouter {
             }
         }
 
-        // 组网路由钩子：允许运行时注入远端路由目标 / 按白名单过滤（TokenTap Share）
+        // 组网路由钩子：允许运行时注入远端路由目标 / 按白名单过滤（cc-switch-remote Share）
         if let Some(hook) = self.route_hook.read().await.as_ref() {
             result = hook.post_select_with_target(app_type, std::mem::take(&mut result), target);
         }

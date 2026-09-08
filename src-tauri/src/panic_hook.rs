@@ -25,7 +25,7 @@ pub fn init_app_config_dir(dir: PathBuf) {
 fn default_app_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".tokentap")
+        .join(".cc-switch-remote")
 }
 
 /// 获取应用配置目录（优先使用初始化时写入的值；不会 panic）
@@ -250,7 +250,7 @@ mod tests {
     fn test_crash_log_path() {
         let path = get_crash_log_path();
         assert!(path.ends_with("crash.log"));
-        assert!(path.to_string_lossy().contains(".tokentap"));
+        assert!(path.to_string_lossy().contains(".cc-switch-remote"));
     }
 
     #[test]

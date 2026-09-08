@@ -1,4 +1,4 @@
-//! 组网（TokenTap Share）相关类型，与后端 serde camelCase 对齐
+//! 组网（cc-switch-remote Share）相关类型，与后端 serde camelCase 对齐
 
 /** 出借方公开的 Provider 能力摘要（不含密钥） */
 export interface ShareProviderInfo {

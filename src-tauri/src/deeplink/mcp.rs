@@ -1,6 +1,6 @@
 //! MCP server import from deep link
 //!
-//! Handles batch import of MCP server configurations via tokentap:// URLs.
+//! Handles batch import of MCP server configurations via cc-switch-remote:// URLs.
 
 use super::utils::decode_base64_param;
 use super::DeepLinkImportRequest;

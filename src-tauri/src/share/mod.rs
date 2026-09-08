@@ -1,4 +1,4 @@
-//! TokenTap Share 组网模块
+//! cc-switch-remote Share 组网模块
 //!
 //! 多个客户端通过 share id 组网，把本地请求路由到网络内其他成员的机器上，
 //! 消费对方共享出来的供应商额度。请求永远由出借方本机向上游发出（见
@@ -1188,7 +1188,7 @@ impl ShareManager {
             };
             let Some(provider) = provider else {
                 // 没有可投影的本地 Provider 时恢复 Agent 原生配置，避免保留
-                // tokentap_shared model_provider 和占位认证信息。
+                // cc-switch-remote-shared model_provider 和占位认证信息。
                 proxy.set_takeover_for_app(app_type, false).await?;
                 continue;
             };
@@ -2050,7 +2050,7 @@ fn resolve_relay_addrs(override_addr: Option<&str>) -> Result<Vec<Multiaddr>, St
             }
             // 环境变量（运维/测试注入）：逗号/换行分隔
             if out.is_empty() {
-                if let Ok(env_addrs) = std::env::var("TOKENTAP_RELAY_ADDRS") {
+                if let Ok(env_addrs) = std::env::var("CC_SWITCH_REMOTE_RELAY_ADDRS") {
                     out.extend(parse_relay_addr_list(
                         &env_addrs,
                         "环境变量中的 relay 地址",
@@ -2166,7 +2166,7 @@ pub fn generate_random_node_name() -> String {
 
 /// 消费侧请求日志的 provider_id 形态：`share:<peer_id>:<provider_id>`。
 /// 必须与 DAO 聚合（share_remote_provider_tokens_used 的 LIKE 前缀）严格一致，
-/// 抽成函数供两侧共用并有单测对齐（曾因少一个冒号导致统计恒为 0）。
+/// 抽成函数供两侧共用并有单测对齐。
 fn provider_usage_key(peer_id: &str, provider_id: &str) -> String {
     format!("{SHARE_REMOTE_PROVIDER_PREFIX}:{peer_id}:{provider_id}")
 }
@@ -2252,7 +2252,7 @@ mod tests {
     #[test]
     fn provider_usage_key_matches_dao_aggregation_shape() {
         // get_status 的查询键必须与 DAO 聚类的 LIKE 前缀形态一致：
-        // share:<peer_id>:<provider_id>（曾因少一个冒号导致统计恒为 0）
+        // share:<peer_id>:<provider_id>
         let key = provider_usage_key("12D3KooWabc", "zhipu-1");
         assert_eq!(key, "share:12D3KooWabc:zhipu-1");
         // 与 DAO 侧的 LIKE 前缀（share:%）按相同首段开始，避免两侧形态漂移

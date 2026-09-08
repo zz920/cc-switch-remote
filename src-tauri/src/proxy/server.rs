@@ -292,7 +292,7 @@ impl ProxyServer {
         build_proxy_router(self.state.clone())
     }
 
-    /// 安装组网路由钩子（TokenTap Share：注入远端路由目标 / 白名单过滤）
+    /// 安装组网路由钩子（cc-switch-remote Share：注入远端路由目标 / 白名单过滤）
     pub async fn install_route_hook(
         &self,
         hook: std::sync::Arc<dyn super::provider_router::RouteHook>,
@@ -341,7 +341,7 @@ impl ProxyServer {
 
 /// 基于给定状态构建代理 axum Router
 ///
-/// 从 `ProxyServer::build_router` 抽出：组网（TokenTap Share）出借侧需要
+/// 从 `ProxyServer::build_router` 抽出：组网（cc-switch-remote Share）出借侧需要
 /// 用“受限 ProxyState”（白名单路由表 + 按 peer 归因）复用同一套 handlers。
 pub(crate) fn build_proxy_router(state: ProxyState) -> Router {
     Router::new()

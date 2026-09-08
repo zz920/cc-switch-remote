@@ -1,4 +1,4 @@
-//! 组网（TokenTap Share）相关的 Tauri 命令
+//! 组网（cc-switch-remote Share）相关的 Tauri 命令
 
 use crate::share::keystore::KeyStorage;
 use crate::share::types::{

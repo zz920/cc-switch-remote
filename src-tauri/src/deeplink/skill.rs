@@ -1,6 +1,6 @@
 //! Skill import from deep link
 //!
-//! Handles importing skill repository configurations via tokentap:// URLs.
+//! Handles importing skill repository configurations via cc-switch-remote:// URLs.
 
 use super::DeepLinkImportRequest;
 use crate::error::AppError;

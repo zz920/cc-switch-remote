@@ -3322,7 +3322,7 @@
       "dialogTitle": "加入共享網路",
       "dialogDescription": "輸入網路 ID 發起加入申請，等待網路管理員審核。",
       "shareIdLabel": "網路 ID",
-      "shareIdPlaceholder": "網路 ID 或 tokentap://join?id= 連結",
+      "shareIdPlaceholder": "網路 ID 或 cc-switch-remote://join?id= 連結",
       "shareIdDescription": "支援直接貼上完整邀請連結，將自動擷取網路 ID。",
       "relayAddrLabel": "Relay 位址",
       "relayAddrPlaceholder": "例如 /ip4/192.168.1.100/tcp/15720/p2p/...",

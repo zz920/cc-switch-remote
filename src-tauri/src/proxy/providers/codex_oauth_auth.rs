@@ -71,7 +71,7 @@ const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 /// 非敏感账号元数据，秘密由操作系统凭据库持有。
 const CODEX_OAUTH_STORE_VERSION: u32 = 2;
 #[cfg(not(test))]
-const CODEX_OAUTH_KEYRING_SERVICE: &str = "tokentap";
+const CODEX_OAUTH_KEYRING_SERVICE: &str = "cc-switch-remote";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -1490,7 +1490,7 @@ impl CodexOAuthManager {
         // the clear has committed.
         let _lifecycle = self.lifecycle_lock.write().await;
 
-        // 合并双方语义：token 世代用于 keyring 密钥清理（本 fork），
+        // 合并双方语义：token 世代用于 keyring 密钥清理，
         // id_token 用于上游 v3.20.1 的原生 auth.json 托管移除保护。
         let account_generations = self
             .accounts
@@ -1805,9 +1805,9 @@ impl CodexOAuthManager {
             .resolve_default_account_id()
             .await
             .or_else(|| Some(account_id.clone()));
-        // fork 的 keyring 架构：密钥进系统凭据库，盘上只落元数据。
+        // keyring 架构：密钥进系统凭据库，盘上只落元数据。
         // （上游 v3.20.1 此处直接写全量账号 JSON，会把 refresh/id token
-        //  明文留在磁盘上，违背本 fork 的存储边界，故改写为 V2 元数据流。）
+        //  明文留在磁盘上，违背本项目的存储边界，故改写为 V2 元数据流。）
         self.save_account_secrets(&data)?;
         let previous_store = self.read_v2_store_sync();
         let store = CodexOAuthStoreV2 {
