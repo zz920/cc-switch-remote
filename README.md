@@ -1,6 +1,6 @@
 # cc-switch-remote
 
-基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License）二次开发。
+> 基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License, Copyright (c) 2025 Jason Young）二次开发。
 
 **cc-switch-remote** 在 cc-switch 的供应商管理与本地路由能力之上，新增 **share id 组网**：
 多个客户端通过 share id 组成 P2P 网络，把本地 Claude Code / Codex 等 CLI 的请求
