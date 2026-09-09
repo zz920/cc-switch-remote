@@ -2087,15 +2087,6 @@ impl CodexOAuthManager {
         }
     }
 
-    #[cfg(not(test))]
-    fn secret_entry(
-        account_id: &str,
-        generation: i64,
-        kind: &str,
-    ) -> Result<keyring::Entry, CodexOAuthError> {
-        Self::entry_for_key(&Self::secret_key(account_id, generation, kind))
-    }
-
     #[cfg(test)]
     fn test_secret_store_path(&self) -> PathBuf {
         self.storage_path

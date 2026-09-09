@@ -1,426 +1,82 @@
 # cc-switch-remote
 
-> 基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License, Copyright (c) 2025 Jason Young）二次开发。
->
-> cc-switch-remote 在 cc-switch 的供应商管理与本地路由能力之上，新增 **share id 组网**：
-> 多个客户端通过 share id 组成网络，把本地 Claude Code / Codex 等 CLI 的请求
-> 路由到网络内其他成员的机器上，消费对方共享出来的供应商额度。
-> 请求永远由出借方本机向上游服务商发出（出站身份模型），服务商全程只见出借方本机。
->
-> 以下为上游项目原始 README（赞助/推广内容已移除），功能文档逐步替换中。
+基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License）二次开发。
 
-<div align="center">
+**cc-switch-remote** 在 cc-switch 的供应商管理与本地路由能力之上，新增 **share id 组网**：
+多个客户端通过 share id 组成 P2P 网络，把本地 Claude Code / Codex 等 CLI 的请求
+路由到网络内其他成员的机器上，消费对方共享出来的供应商额度。
 
-# CC Switch
+请求永远由**出借方本机**向上游服务商发出（出站身份模型）——服务商全程只看到
+出借方的机器与凭据；消费方的 API Key 从不离开消费方本机。
 
-### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw & Hermes Agent
+```
+消费方 CLI ──本机代理──► P2P 加密隧道（QUIC / IPv6 直连 / relay 中继）──► 出借方本机代理 ──► 上游服务商
+```
 
-[![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
-[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
-[![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
+## 组件
 
-<a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-<a href="https://www.star-history.com/#farion1231/cc-switch&Date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/badge?repo=farion1231/cc-switch&theme=dark" /><img alt="Star History Rank" src="https://api.star-history.com/badge?repo=farion1231/cc-switch" width="196" height="55" /></picture></a>
+| 目录 | 说明 |
+|---|---|
+| `src-tauri/` | 桌面应用（Tauri 2 + React）：供应商管理、本地路由接管、组网、配额 |
+| `relay/` | 信令/中继服务器（独立 crate）：rendezvous 服务端 + circuit relay v2，供自建 relay 用 |
 
-### 🌐 The Only Official Website: **[ccswitch.io](https://ccswitch.io)**
+桌面客户端**默认连接官方 relay**（`tokentap.top`），无需自建任何服务端即可组网。
+`relay/` 面向需要自建信令基础设施的高级用户，构建与部署见 [relay/README.md](relay/README.md)。
 
-English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
+## 组网工作方式
 
-</div>
+1. **创建网络**的一方获得一个 8 位 share id（如 `4JM8-4DXS`）
+2. 其他成员凭 share id 申请加入，创建方审批
+3. 网络成员选择性地把自己的供应商"出借"给网络（默认什么都不共享）
+4. 消费方在本机代理里把某个 Agent 的路由切到网络成员的供应商上
+5. 计费走出借方账号；出借方可按天/月设置 token 配额与每节点限额
 
+**安全模型**（务必阅读）：
 
-## Why CC Switch?
+- 消费方的凭据（API Key / OAuth）**永不出境**，出借方收到的是净化后的请求
+- 出借方注入自己的凭据向上游发起全新请求
+- **信任边界**：出借方对其转发的请求/响应内容完全可见（这是"流量出借"的固有属性）。
+  请只与你信任的人组网；涉及公司/客户代码的机器不要加入
+- 传输层全程加密（QUIC-TLS / Noise）；relay 服务器无法解密端到端内容
 
-Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
+## 构建
 
-**CC Switch** gives you a single desktop app to manage all supported AI tools. Instead of editing config files by hand, you get a visual interface to import providers with one click, switch between them instantly, with 50+ built-in provider presets, unified MCP and Skills management, and system tray quick switching — all backed by a reliable SQLite database with atomic writes that protect your configs from corruption.
-
-- **One App, Eight Tools** — Manage Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes from a single interface
-- **No More Manual Editing** — 50+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays; just pick and switch
-- **Unified MCP & Skills Management** — One panel to manage MCP servers and Skills across Claude, Codex, Gemini, Grok Build, OpenCode, and Hermes with bidirectional sync
-- **System Tray Quick Switch** — Switch providers instantly from the tray menu, no need to open the full app
-- **Cloud Sync** — Sync provider data across devices via Dropbox, OneDrive, iCloud, or WebDAV servers
-- **Cross-Platform** — Native desktop app for Windows, macOS, and Linux, built with Tauri 2
-- **Built-in Utilities** — Includes various utilities for first-launch login confirmation, signature bypass, plugin extension sync, and more
-
-## Screenshots
-
-|                  Main Interface                   |                  Add Provider                  |
-| :-----------------------------------------------: | :--------------------------------------------: |
-| ![Main Interface](assets/screenshots/main-en.png) | ![Add Provider](assets/screenshots/add-en.png) |
-
-## Features
-
-[Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.16.1-en.md)
-
-### Provider Management
-
-- **8 supported tools, 50+ presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes; copy your key and import with one click
-- **Universal providers** — One config syncs to Claude Code, Codex, and Gemini CLI
-- One-click switching, system tray quick access, drag-and-drop sorting, import/export
-
-### Proxy & Failover
-
-- **Local proxy with hot-switching** — Format conversion, auto-failover, circuit breaker, provider health monitoring, and request rectifier
-- **App-level takeover** — Independently proxy Claude, Codex, Gemini, or Grok Build, down to individual providers
-
-### MCP, Prompts & Skills
-
-- **Unified MCP panel** — Manage MCP servers across Claude, Codex, Gemini, Grok Build, OpenCode, and Hermes with bidirectional sync and Deep Link import
-- **Prompts** — Markdown editor with cross-app sync (CLAUDE.md / AGENTS.md / GEMINI.md) and backfill protection
-- **Skills** — One-click install from GitHub repos or ZIP files, custom repository management, with symlink and file copy support
-
-### Usage & Cost Tracking
-
-- **Usage dashboard** — Track spending, requests, and tokens with trend charts, detailed request logs, and custom per-model pricing
-
-### Session Manager & Workspace
-
-- Browse, search, and restore conversation history across supported session sources
-- **Workspace editor** (OpenClaw) — Edit agent files (AGENTS.md, SOUL.md, etc.) with Markdown preview
-
-### System & Platform
-
-- **Cloud sync** — Custom config directory (Dropbox, OneDrive, iCloud, NAS) and WebDAV server sync
-- **Deep Link** (`ccswitch://`) — Import providers, MCP servers, prompts, and skills via URL
-- Dark / Light / System theme, auto-launch, auto-updater, atomic writes, auto-backups, i18n (zh/zh-TW/en/ja)
-
-## FAQ
-
-<details>
-<summary><strong>Which AI tools does CC Switch support?</strong></summary>
-
-CC Switch supports eight tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, and **Hermes**. Each tool has dedicated provider presets and configuration management.
-
-</details>
-
-<details>
-<summary><strong>Do I need to restart the terminal after switching providers?</strong></summary>
-
-For most tools, yes — restart your terminal or the CLI tool for changes to take effect. The exception is **Claude Code**, which currently supports hot-switching of provider data without a restart.
-
-</details>
-
-<details>
-<summary><strong>My plugin configuration disappeared after switching providers — what happened?</strong></summary>
-
-CC Switch provides a "Shared Config Snippet" feature to pass common data (beyond API keys and endpoints) between providers. Go to "Edit Provider" → "Shared Config Panel" → click "Extract from Current Provider" to save all common data. When creating a new provider, check "Write Shared Config" (enabled by default) to include plugin data in the new provider. All your configuration items are preserved in the default provider imported when you first launched the app.
-
-</details>
-
-<details>
-<summary><strong>macOS installation</strong></summary>
-
-CC Switch for macOS is code-signed and notarized by Apple. You can download and install it directly — no extra steps needed. We recommend using the `.dmg` installer.
-
-</details>
-
-<details>
-<summary><strong>Why can't I delete the currently active provider?</strong></summary>
-
-CC Switch follows a "minimal intrusion" design principle — even if you uninstall the app, your CLI tools will continue to work normally. The system always keeps one active configuration, because deleting all configurations would make the corresponding CLI tool unusable. If you rarely use a specific CLI tool, you can hide it in Settings. To switch back to official login, see the next question.
-
-</details>
-
-<details>
-<summary><strong>How do I switch back to official login?</strong></summary>
-
-Add an official provider from the preset list. After switching to it, run the Log out / Log in flow, and then you can freely switch between the official provider and third-party providers. Codex supports switching between different official providers, making it easy to switch between multiple Plus or Team accounts.
-
-</details>
-
-<details>
-<summary><strong>Where is my data stored?</strong></summary>
-
-- **Database**: `~/.cc-switch/cc-switch.db` (SQLite — providers, MCP, prompts, skills)
-- **Local settings**: `~/.cc-switch/settings.json` (device-level UI preferences)
-- **Backups**: `~/.cc-switch/backups/` (auto-rotated, keeps 10 most recent)
-- **Skills**: `~/.cc-switch/skills/` (symlinked to corresponding apps by default)
-- **Skill Backups**: `~/.cc-switch/skill-backups/` (created automatically before uninstall, keeps 20 most recent)
-
-</details>
-
-<details>
-<summary><strong>Linux (Wayland + NVIDIA): clicks don't register and the window black-screens on resize</strong></summary>
-
-The AppImage forces `GDK_BACKEND=x11` (XWayland) to avoid a historical native-Wayland crash. On newer Wayland + NVIDIA setups this can leave the web content area unclickable (the title-bar buttons still work) and black-screen on resize. Launch with the opt-in escape hatch to switch back to native Wayland:
+桌面端（要求 Node 20+、pnpm、Rust ≥ 1.83，Windows 需 VS C++ Build Tools）：
 
 ```bash
-CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+pnpm install --frozen-lockfile
+pnpm tauri build --bundles nsis        # Windows (.exe)
+pnpm tauri build --bundles deb,appimage  # Linux
+pnpm tauri build --bundles dmg         # macOS
 ```
 
-If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `env CC_SWITCH_GDK_BACKEND=wayland /path/to/AppImage`) or set it in your session environment. The variable is generic: on tiling Wayland compositors (sway/Hyprland) where clicks don't register, try `CC_SWITCH_GDK_BACKEND=x11` instead. Leaving it unset keeps the default behavior.
-
-</details>
-
-## Documentation
-
-For detailed guides on every feature, check out the **[User Manual](docs/user-manual/en/README.md)** — covering provider management, MCP/Prompts/Skills, proxy & failover, and more.
-
-## Quick Start
-
-### Basic Usage
-
-1. **Add Provider**: Click "Add Provider" → Choose a preset or create custom configuration
-2. **Switch Provider**:
-   - Main UI: Select provider → Click "Enable"
-   - System Tray: Click provider name directly (instant effect)
-3. **Takes Effect**: Restart your terminal or the corresponding CLI tool to apply changes (Claude Code does not require a restart)
-4. **Back to Official**: Add an "Official Login" preset, restart the CLI tool, then follow its login/OAuth flow
-
-### MCP, Prompts, Skills & Sessions
-
-- **MCP**: Click the "MCP" button → Add servers via templates or custom config → Toggle per-app sync
-- **Prompts**: Click "Prompts" → Create presets with Markdown editor → Activate to sync to live files
-- **Skills**: Click "Skills" → Browse GitHub repos → One-click install to supported apps
-- **Sessions**: Click "Sessions" → Browse, search, and restore conversation history across supported session sources
-
-> **Note**: On first launch, you can manually import existing CLI tool configs as the default provider.
-
-## Download & Installation
-
-### System Requirements
-
-- **Windows**: Windows 10 and above
-- **macOS**: macOS 12 (Monterey) and above
-- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ and other mainstream distributions
-
-### Windows Users
-
-Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v{version}-Windows-Portable.zip` portable version from the [Releases](../../releases) page.
-
-### macOS Users
-
-**Method 1: Install via Homebrew (Recommended)**
+relay 服务端：
 
 ```bash
-brew install --cask cc-switch
+cd relay && cargo build --release
 ```
 
-Update:
+## 与 cc-switch 的关系
 
-```bash
-brew upgrade --cask cc-switch
-```
+cc-switch-remote 感谢 [cc-switch](https://github.com/farion1231/cc-switch) 及其贡献者。
+上游的供应商管理、MCP、Skills、多应用支持等能力完整保留；本仓库的增量改动集中
+在 P2P 组网（`share/` 模块）与凭据存储安全加固。上游的完整功能介绍请移步其 README。
 
-**Method 2: Manual Download**
+## 免责声明 / Disclaimer
 
-Download `CC-Switch-v{version}-macOS.dmg` (recommended) or `.zip` from the [Releases](../../releases) page.
+本项目按 "AS IS" 提供，不附带任何明示或默示的保证。使用者需自行承担使用风险：
 
-> **Note**: CC Switch for macOS is code-signed and notarized by Apple. You can install and open it directly.
+- **账号风险**：共享供应商额度可能违反上游服务商（OpenAI、Anthropic、智谱等）的
+  服务条款，可能导致账号被封禁或限制。请在使用前阅读并遵守相关条款
+- **数据暴露**：组网出借方对其转发的请求与响应内容完全可见（见上方安全模型），
+  请勿在涉及敏感或机密信息的机器上使用共享功能
+- **合规使用**：请确保你的使用方式符合所在司法辖区的法律法规
 
-### Arch Linux Users
-
-**Install via paru (Recommended)**
-
-```bash
-paru -S cc-switch-bin
-```
-
-### Linux Users
-
-Download the latest Linux build from the [Releases](../../releases) page:
-
-- `CC-Switch-v{version}-Linux.deb` (Debian/Ubuntu)
-- `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
-- `CC-Switch-v{version}-Linux.AppImage` (Universal)
-
-> **Flatpak**: Not included in official releases. You can build it yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
-
-<details>
-<summary><strong>Architecture Overview</strong></summary>
-
-### Design Principles
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (React + TS)                    │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │ Components  │  │    Hooks     │  │  TanStack Query  │    │
-│  │   (UI)      │──│ (Bus. Logic) │──│   (Cache/Sync)   │    │
-│  └─────────────┘  └──────────────┘  └──────────────────┘    │
-└────────────────────────┬────────────────────────────────────┘
-                         │ Tauri IPC
-┌────────────────────────▼────────────────────────────────────┐
-│                  Backend (Tauri + Rust)                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │  Commands   │  │   Services   │  │  Models/Config   │    │
-│  │ (API Layer) │──│ (Bus. Layer) │──│     (Data)       │    │
-│  └─────────────┘  └──────────────┘  └──────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Core Design Patterns**
-
-- **SSOT** (Single Source of Truth): All data stored in `~/.cc-switch/cc-switch.db` (SQLite)
-- **Dual-layer Storage**: SQLite for syncable data, JSON for device-level settings
-- **Dual-way Sync**: Write to live files on switch, backfill from live when editing active provider
-- **Atomic Writes**: Temp file + rename pattern prevents config corruption
-- **Concurrency Safe**: Mutex-protected database connection avoids race conditions
-- **Layered Architecture**: Clear separation (Commands → Services → DAO → Database)
-
-**Key Components**
-
-- **ProviderService**: Provider CRUD, switching, backfill, sorting
-- **McpService**: MCP server management, import/export, live file sync
-- **ProxyService**: Local proxy mode with hot-switching and format conversion
-- **SessionManager**: Conversation history browsing across supported session sources
-- **ConfigService**: Config import/export, backup rotation
-- **SpeedtestService**: API endpoint latency measurement
-
-</details>
-
-<details>
-<summary><strong>Development Guide</strong></summary>
-
-### Environment Requirements
-
-- Node.js 18+
-- pnpm 8+
-- Rust 1.85+
-- Tauri CLI 2.8+
-
-### Development Commands
-
-```bash
-# Install dependencies
-pnpm install
-
-# Dev mode (hot reload)
-pnpm dev
-
-# Type check
-pnpm typecheck
-
-# Format code
-pnpm format
-
-# Check code format
-pnpm format:check
-
-# Run frontend unit tests
-pnpm test:unit
-
-# Run tests in watch mode (recommended for development)
-pnpm test:unit:watch
-
-# Build application
-pnpm build
-
-# Build debug version
-pnpm tauri build --debug
-```
-
-### Rust Backend Development
-
-```bash
-cd src-tauri
-
-# Format Rust code
-cargo fmt
-
-# Run clippy checks
-cargo clippy
-
-# Run backend tests
-cargo test
-
-# Run specific tests
-cargo test test_name
-
-# Run tests with test-hooks feature
-cargo test --features test-hooks
-```
-
-### Testing Guide
-
-**Frontend Testing**:
-
-- Uses **vitest** as test framework
-- Uses **MSW (Mock Service Worker)** to mock Tauri API calls
-- Uses **@testing-library/react** for component testing
-
-**Running Tests**:
-
-```bash
-# Run all tests
-pnpm test:unit
-
-# Watch mode (auto re-run)
-pnpm test:unit:watch
-
-# With coverage report
-pnpm test:unit --coverage
-```
-
-### Tech Stack
-
-**Frontend**: React 18 · TypeScript · Vite · TailwindCSS 3.4 · TanStack Query v5 · react-i18next · react-hook-form · zod · shadcn/ui · @dnd-kit
-
-**Backend**: Tauri 2.8 · Rust · serde · tokio · thiserror · tauri-plugin-updater/process/dialog/store/log
-
-**Testing**: vitest · MSW · @testing-library/react
-
-</details>
-
-<details>
-<summary><strong>Project Structure</strong></summary>
-
-```
-├── src/                        # Frontend (React + TypeScript)
-│   ├── components/
-│   │   ├── providers/          # Provider management
-│   │   ├── mcp/                # MCP panel
-│   │   ├── prompts/            # Prompts management
-│   │   ├── skills/             # Skills management
-│   │   ├── sessions/           # Session Manager
-│   │   ├── proxy/              # Proxy mode panel
-│   │   ├── openclaw/           # OpenClaw config panels
-│   │   ├── settings/           # Settings (Terminal/Backup/About)
-│   │   ├── deeplink/           # Deep Link import
-│   │   ├── env/                # Environment variable management
-│   │   ├── universal/          # Cross-app configuration
-│   │   ├── usage/              # Usage statistics
-│   │   └── ui/                 # shadcn/ui component library
-│   ├── hooks/                  # Custom hooks (business logic)
-│   ├── lib/
-│   │   ├── api/                # Tauri API wrapper (type-safe)
-│   │   └── query/              # TanStack Query config
-│   ├── locales/                # Translations (zh/zh-TW/en/ja)
-│   ├── config/                 # Presets (providers/mcp)
-│   └── types/                  # TypeScript definitions
-├── src-tauri/                  # Backend (Rust)
-│   └── src/
-│       ├── commands/           # Tauri command layer (by domain)
-│       ├── services/           # Business logic layer
-│       ├── database/           # SQLite DAO layer
-│       ├── proxy/              # Proxy module
-│       ├── session_manager/    # Session management
-│       ├── deeplink/           # Deep Link handling
-│       └── mcp/                # MCP sync module
-├── tests/                      # Frontend tests
-└── assets/                     # Screenshots & partner resources
-```
-
-</details>
-
-## Contributing
-
-Issues and suggestions are welcome!
-
-Before submitting PRs, please ensure:
-
-- Pass type check: `pnpm typecheck`
-- Pass format check: `pnpm format:check`
-- Pass unit tests: `pnpm test:unit`
-
-For new features, please open an issue for discussion before submitting a PR. PRs for features that are not a good fit for the project may be closed.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/cc-switch&type=Date)](https://www.star-history.com/#farion1231/cc-switch&Date)
+This project is provided "AS IS", without warranty of any kind. Sharing
+provider quota may violate upstream providers' terms of service and lead
+to account suspension. The lending party has full visibility into relayed
+traffic. Use at your own risk and in compliance with your local laws.
 
 ## License
 
-MIT © Jason Young
+MIT（见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)）。
