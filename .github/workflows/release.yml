@@ -67,7 +67,7 @@ jobs:
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          pnpm tauri build --bundles dmg --config scripts/build-config.json
+          pnpm tauri build --target universal-apple-darwin --bundles dmg --config scripts/build-config.json
 
       - name: Collect artifacts
         shell: bash
