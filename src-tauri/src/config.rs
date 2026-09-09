@@ -199,17 +199,18 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.cc-switch-remote)
+/// 获取应用配置目录路径 (~/.cc-switch)
 ///
-/// 默认目录；首次运行时自动从旧目录 ~/.cc-switch-remote / ~/.cc-switch（按序）迁移。
+/// 与上游 cc-switch 一致；早期 cc-switch-remote 版本使用过 ~/.cc-switch-remote，
+/// 首次运行时自动整体迁移。
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
 
-    let default_dir = get_home_dir().join(".cc-switch-remote");
+    let default_dir = get_home_dir().join(".cc-switch");
 
-    // 品牌迁移：旧目录 → ~/.cc-switch-remote（含真实数据时整体更名，
+    // 目录迁移：~/.cc-switch-remote → ~/.cc-switch（含真实数据时整体更名，
     // 失败则继续使用旧目录，保证不丢数据）
     if let Some(legacy) = migrate_legacy_app_config_dir(&default_dir) {
         return legacy;
@@ -226,7 +227,7 @@ pub fn get_app_config_dir() -> PathBuf {
             if let Ok(home_env) = std::env::var("HOME") {
                 let trimmed = home_env.trim();
                 if !trimmed.is_empty() {
-                    for name in [".cc-switch-remote", ".cc-switch-remote", ".cc-switch"] {
+                    for name in [".cc-switch", ".cc-switch-remote"] {
                         let legacy_dir = PathBuf::from(trimmed).join(name);
                         if legacy_dir.join("cc-switch.db").exists() {
                             log::info!(
@@ -252,7 +253,7 @@ fn migrate_legacy_app_config_dir(default_dir: &std::path::Path) -> Option<PathBu
     if default_dir.exists() {
         return None;
     }
-    let legacy_dir = [".cc-switch-remote", ".cc-switch"].iter().find_map(|name| {
+    let legacy_dir = [".cc-switch-remote"].iter().find_map(|name| {
         let dir = get_home_dir().join(name);
         dir.exists().then_some(dir)
     })?;

@@ -1,7 +1,6 @@
 {
   "name": "cc-switch-remote",
-  "version": "3.20.1",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "version": "3.20.2",  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",

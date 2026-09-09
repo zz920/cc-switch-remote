@@ -67,7 +67,7 @@ pub const HEADER_ROUTE_PROVIDER: &str = "x-cc-switch-remote-share-provider";
 /// 共享 Provider 连通性探测路径（不发起模型请求）。
 pub const PROVIDER_CHECK_PATH: &str = "/__cc-switch-remote__/provider-check";
 
-/// 组网数据目录（~/.cc-switch-remote/share 或 ~/.cc-switch/share，迁移期兼容）
+/// 组网数据目录（~/.cc-switch/share）
 pub fn share_data_dir() -> PathBuf {
     let dir = crate::config::get_app_config_dir().join("share");
     let _ = std::fs::create_dir_all(&dir);

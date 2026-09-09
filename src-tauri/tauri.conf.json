@@ -1,9 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "cc-switch-remote",
-  "version": "3.20.1",
-  "identifier": "com.ccswitch.remote",
-  "build": {
+  "version": "3.20.2",
+  "identifier": "com.ccswitch.remote",  "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm run dev:renderer",
