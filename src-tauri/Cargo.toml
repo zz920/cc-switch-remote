@@ -1,7 +1,8 @@
 [package]
 name = "cc-switch"
 version = "3.20.2"
-description = "cc-switch-remote: cc-switch fork with share-id P2P networking for Claude Code, Codex and Gemini CLI"authors = ["Jason Young"]
+description = "cc-switch-remote: cc-switch fork with share-id P2P networking for Claude Code, Codex and Gemini CLI"
+authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
 edition = "2021"
