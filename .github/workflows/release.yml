@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts
-          find src-tauri/target -type f             \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" \)             -exec cp {} artifacts/ \; || true
+          find src-tauri/target -type d -name bundle             -exec find {} -type f             \( -name "*setup.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" \) \;             -exec cp {} artifacts/ \; || true
           ls -la artifacts/
 
       - name: Upload artifacts
