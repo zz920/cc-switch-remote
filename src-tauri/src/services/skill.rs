@@ -5547,7 +5547,7 @@ mod tests {
         // 本 fork 的应用目录已品牌迁移为 .cc-switch-remote（上游测试硬编码 .cc-switch）
         let new_source = temp
             .path()
-            .join(".cc-switch-remote")
+            .join(".cc-switch")
             .join("skills")
             .join("test-skill");
         let pi_skill = temp
