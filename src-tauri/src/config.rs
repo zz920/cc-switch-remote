@@ -200,9 +200,6 @@ pub fn get_claude_settings_path() -> PathBuf {
 }
 
 /// 获取应用配置目录路径 (~/.cc-switch)
-///
-/// 与上游 cc-switch 一致；早期 cc-switch-remote 版本使用过 ~/.cc-switch-remote，
-/// 首次运行时自动整体迁移。
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
@@ -210,16 +207,13 @@ pub fn get_app_config_dir() -> PathBuf {
 
     let default_dir = get_home_dir().join(".cc-switch");
 
-    // 目录迁移：~/.cc-switch-remote → ~/.cc-switch（含真实数据时整体更名，
-    // 失败则继续使用旧目录，保证不丢数据）
+    // 历史目录兼容：整体迁移到当前默认位置（失败则继续使用原目录）
     if let Some(legacy) = migrate_legacy_app_config_dir(&default_dir) {
         return legacy;
     }
 
-    // 兼容旧版本：当用户环境存在 `HOME` 且与真实用户目录不同，
-    // 旧版可能在 `HOME/.cc-switch-remote/` 或 `HOME/.cc-switch/` 下创建/使用了数据库。
-    // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
-    // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    // HOME 变量兜底：在非默认位置查找已有数据库，确保升级用户不丢失数据；
+    // 仅在默认位置为空时回退，新安装不受影响。
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
@@ -246,7 +240,7 @@ pub fn get_app_config_dir() -> PathBuf {
     default_dir
 }
 
-/// 品牌迁移：若新目录不存在而旧目录（~/.cc-switch）含真实数据，整体更名为新目录
+/// 历史目录迁移：将旧版本使用的配置目录整体更名为当前默认位置
 ///
 /// 返回 `Some(旧目录)` 表示迁移失败应继续使用旧目录；`None` 表示使用新目录。
 fn migrate_legacy_app_config_dir(default_dir: &std::path::Path) -> Option<PathBuf> {
