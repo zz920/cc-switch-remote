@@ -43,6 +43,21 @@
 
 ![使用共享网络](assets/screenshots/share-network.png)
 
+### 共享 OpenAI Official（ChatGPT 订阅）
+
+OpenAI Official 是唯一支持共享的 Official 供应商：
+
+1. 在提供方机器上，通过认证中心完成 ChatGPT 账号登录（Device Code 流程）
+2. 编辑 OpenAI Official 供应商，在表单中选择要绑定的托管账号
+3. 保存后，共享设置中该供应商即可勾选出借
+
+接收方使用时**无需任何配置**——模型由提供方的 ChatGPT 账号动态决定，
+Codex CLI 会使用自身默认模型并随其版本升级。
+
+> **其他 Official 供应商暂不支持共享**：Claude Official、Gemini Official、
+> Grok Official 因凭据模型差异（OAuth scope / 请求签名与账号绑定方式不同），
+> 当前版本无法安全地跨机器出借，列表中显示为"不可共享"。
+
 ## 常见问题
 
 **Q：提供方能看到我的请求内容吗？**
