@@ -1,0 +1,37 @@
+[package]
+name = "cc-switch-remote-relay"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MIT"
+description = "cc-switch-remote 组网信令/中继服务器（libp2p rendezvous server + circuit relay v2 server）"
+publish = false
+
+[dependencies]
+# rust-libp2p 最新稳定版。feature 说明：
+#   quic/tcp        双 transport（QUIC over UDP + TCP 兜底）
+#   noise           TCP 上的加密握手（QUIC 自带加密，无需 noise）
+#   yamux           TCP 上的流多路复用
+#   relay           circuit relay v2 服务端（打洞失败时中继流量）
+#   rendezvous      rendezvous 服务端（节点注册/发现，即信令）
+#   identify        交换观察地址与能力信息（DCUtR 打洞依赖）
+#   tokio           tokio 执行器
+#   macros          NetworkBehaviour derive 宏
+#   ed25519         Ed25519 节点身份密钥
+libp2p = { version = "0.56.0", features = [
+    "quic",
+    "tcp",
+    "dns",
+    "noise",
+    "yamux",
+    "relay",
+    "rendezvous",
+    "identify",
+    "tokio",
+    "macros",
+    "ed25519",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
