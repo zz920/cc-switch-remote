@@ -1966,7 +1966,6 @@ impl CodexOAuthManager {
     const KEYRING_VALUE_CHUNK_CHARS: usize = 1024;
     const KEYRING_CHUNK_MARKER_PREFIX: &str = "chunked:v1:";
 
-    #[cfg(test)]
     fn chunk_entry_key(base_key: &str, index: usize) -> String {
         format!("{base_key}#c{index}")
     }
