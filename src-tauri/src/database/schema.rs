@@ -3578,7 +3578,7 @@ mod tests {
     /// 迁移矩阵：本项目的 v18（已建组网表）→ v19 补游标列、组网表保留
     #[test]
     fn migrate_v18_fork_shape_to_v19_keeps_share_tables_and_adds_cursors() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
         Database::create_tables_on_conn(&conn).unwrap();
         // 制造 fork 形态的 v18：全新库全链迁移到 18 后停住
         Database::set_user_version(&conn, 18).unwrap();
@@ -3605,7 +3605,7 @@ mod tests {
     /// v19 必须幂等补建组网表，否则该来源库升级后 share 功能无声缺失
     #[test]
     fn migrate_v18_upstream_shape_to_v19_recreates_share_tables() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
         // 手工搭上游 v18 形态：有 session_log_sync（含游标列）、无组网表
         conn.execute_batch(
             "CREATE TABLE session_log_sync (

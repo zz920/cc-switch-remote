@@ -1008,6 +1008,7 @@ pub async fn handle_alpha_search(
 }
 
 /// Handle Codex's legacy Images API endpoint for built-in ImageGen.
+#[allow(dead_code)] // reserved for the upcoming images/generations route
 pub async fn handle_images_generations(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
