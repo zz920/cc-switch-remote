@@ -1,5 +1,7 @@
 # cc-switch-remote
 
+[![Linux.do](https://img.shields.io/badge/社区-Linux.do-0088cc?style=flat-square)](https://linux.do/)
+
 > 基于 [cc-switch](https://github.com/farion1231/cc-switch)（MIT License, Copyright (c) 2025 Jason Young）二次开发。
 
 **cc-switch-remote** 在 cc-switch 的供应商管理与本地路由能力之上，新增 **share id 组网**：
