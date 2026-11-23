@@ -63,6 +63,7 @@ interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
+  onResetOnboarding?: () => void;
   defaultTab?: string;
 }
 
@@ -70,6 +71,7 @@ export function SettingsPage({
   open,
   onOpenChange,
   onImportSuccess,
+  onResetOnboarding,
   defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
@@ -285,6 +287,26 @@ export function SettingsPage({
                       onChange={(lang) => handleAutoSave({ language: lang })}
                     />
                     <ThemeSettings />
+                    {onResetOnboarding && (
+                      <section className="flex flex-wrap items-center justify-between gap-3">
+                        <header className="space-y-1">
+                          <h3 className="text-sm font-medium">
+                            {t("onboarding.settingsTitle")}
+                          </h3>
+                          <p className="text-xs text-muted-foreground">
+                            {t("onboarding.settingsDescription")}
+                          </p>
+                        </header>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={onResetOnboarding}
+                        >
+                          {t("onboarding.replay")}
+                        </Button>
+                      </section>
+                    )}
                     <AppVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}

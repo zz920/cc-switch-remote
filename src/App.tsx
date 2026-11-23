@@ -91,6 +91,7 @@ import UnifiedSkillsPanel, {
 } from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
+import { NewUserGuide } from "@/components/onboarding/NewUserGuide";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
@@ -148,6 +149,15 @@ const getInitialApp = (): AppId => {
 };
 
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
+const ONBOARDING_STORAGE_KEY = "cc-switch-onboarding-completed";
+const ONBOARDING_STEPS = [
+  "providers",
+  "appSwitcher",
+  "addProvider",
+  "localRouting",
+  "tools",
+  "settings",
+] as const;
 const VALID_VIEWS: View[] = [
   "providers",
   "settings",
@@ -185,6 +195,10 @@ function App() {
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isDeepLinkImportOpen, setIsDeepLinkImportOpen] = useState(false);
+  const [onboardingPending, setOnboardingPending] = useState(
+    () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== "true",
+  );
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsManagementBusy, setSkillsManagementBusy] = useState(false);
@@ -202,6 +216,26 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const onboardingSteps = useMemo(
+    () =>
+      ONBOARDING_STEPS.map((step) => ({
+        target: `[data-guide="${step}"]`,
+        title: t(`onboarding.steps.${step}.title`),
+        description: t(`onboarding.steps.${step}.description`),
+      })),
+    [t],
+  );
+
+  const finishOnboarding = () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
+    setOnboardingPending(false);
+  };
+
+  const resetOnboarding = () => {
+    localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+    setCurrentView("providers");
+    setOnboardingPending(true);
+  };
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -687,6 +721,16 @@ function App() {
   }, []);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
+  const showOnboarding =
+    onboardingPending &&
+    settingsData?.firstRunNoticeConfirmed === true &&
+    currentView === "providers" &&
+    !isDeepLinkImportOpen &&
+    !isAddOpen &&
+    !editingProvider &&
+    !usageProvider &&
+    !confirmAction &&
+    !launchDashboardOpen;
   const openHermesWebUI = useOpenHermesWebUI(() =>
     setLaunchDashboardOpen(true),
   );
@@ -1013,6 +1057,7 @@ function App() {
               open={true}
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
+              onResetOnboarding={resetOnboarding}
               defaultTab={settingsDefaultTab}
             />
           );
@@ -1094,6 +1139,7 @@ function App() {
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeApp}
+                    data-guide="providers"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -1337,6 +1383,7 @@ function App() {
                 <Button
                   variant="ghost"
                   size="icon"
+                  data-guide="settings"
                   onClick={() => {
                     setSettingsDefaultTab("general");
                     setCurrentView("settings");
@@ -1377,6 +1424,7 @@ function App() {
               (activeApp === "claude-desktop" || proxyAppId) && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
+                  data-guide="localRouting"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
                   {activeApp === "claude-desktop" ? (
@@ -1567,7 +1615,10 @@ function App() {
                 )}
                 {currentView === "providers" && (
                   <>
-                    <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                    <div
+                      className="flex items-center gap-1 p-1 bg-muted rounded-xl"
+                      data-guide="tools"
+                    >
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
@@ -1734,6 +1785,7 @@ function App() {
 
                     <Button
                       onClick={() => setIsAddOpen(true)}
+                      data-guide="addProvider"
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
                       aria-label={t("provider.addNewProvider")}
@@ -1825,8 +1877,15 @@ function App() {
         onCancel={() => setLaunchDashboardOpen(false)}
       />
 
-      <DeepLinkImportDialog />
+      <DeepLinkImportDialog onVisibilityChange={setIsDeepLinkImportOpen} />
       <FirstRunNoticeDialog />
+      {showOnboarding && (
+        <NewUserGuide
+          steps={onboardingSteps}
+          onSkip={finishOnboarding}
+          onFinish={finishOnboarding}
+        />
+      )}
     </div>
   );
 }
