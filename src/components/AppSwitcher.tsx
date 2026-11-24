@@ -158,7 +158,6 @@ export function AppSwitcher({
   return (
     <div
       ref={rootRef}
-      data-guide="appSwitcher"
       className="inline-flex bg-muted rounded-xl p-1 gap-1"
       style={{ WebkitAppRegion: "no-drag" } as any}
     >

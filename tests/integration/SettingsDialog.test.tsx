@@ -158,18 +158,6 @@ describe("SettingsPage integration", () => {
     expect((appInput as HTMLInputElement).value).toBe("/home/mock/.cc-switch");
   });
 
-  it("requests a tour reset from the General settings tab", async () => {
-    const onResetOnboarding = vi.fn();
-    renderDialog({ onResetOnboarding });
-
-    const resetButton = await screen.findByRole("button", {
-      name: "onboarding.replay",
-    });
-    fireEvent.click(resetButton);
-
-    expect(onResetOnboarding).toHaveBeenCalledTimes(1);
-  });
-
   it("imports configuration and triggers success callback", async () => {
     const onImportSuccess = vi.fn();
     renderDialog({ onImportSuccess });
