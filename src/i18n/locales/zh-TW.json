@@ -3264,42 +3264,6 @@
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
   },
-  "onboarding": {
-    "progress": "第 {{current}} 步，共 {{total}} 步",
-    "back": "上一步",
-    "next": "下一步",
-    "skip": "略過引導",
-    "finish": "完成",
-    "replay": "重設新手指南",
-    "settingsTitle": "新手指南",
-    "settingsDescription": "返回供應商清單，從第一步重新查看指南。",
-    "steps": {
-      "providers": {
-        "title": "供應商清單",
-        "description": "在這裡查看目前應用程式的供應商，並切換、編輯或管理現有設定。"
-      },
-      "appSwitcher": {
-        "title": "切換應用程式",
-        "description": "選擇 Codex、Claude Code 等應用程式，查看該應用程式的供應商和工具。"
-      },
-      "addProvider": {
-        "title": "新增供應商",
-        "description": "點選新增按鈕，選擇供應商預設或填寫自訂 API 設定。"
-      },
-      "localRouting": {
-        "title": "本機路由",
-        "description": "在「設定 → 路由」中啟用「在主頁面顯示本地路由開關」。支援的應用程式會顯示開關，開啟後可透過 CC Switch 轉送模型請求。"
-      },
-      "tools": {
-        "title": "應用程式工具",
-        "description": "使用頂部的工具按鈕管理 Skills、MCP、提示詞和工作階段等功能。可用工具依目前的應用程式而異。"
-      },
-      "settings": {
-        "title": "設定與共享網路",
-        "description": "在設定中調整偏好。開啟「共享」分頁，即可建立或加入共享網路。"
-      }
-    }
-  },
   "share": {
     "title": "共享網路",
     "intro": "加入或建立一個共享網路，與信任的節點互相出借 AI 供應商額度。所有加入申請都需管理員審核。",

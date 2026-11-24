@@ -32,23 +32,12 @@ interface DeeplinkError {
   error: string;
 }
 
-interface DeepLinkImportDialogProps {
-  onVisibilityChange?: (open: boolean) => void;
-}
-
-export function DeepLinkImportDialog({
-  onVisibilityChange,
-}: DeepLinkImportDialogProps) {
+export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const isVisible = isOpen && request !== null;
-
-  useEffect(() => {
-    onVisibilityChange?.(isVisible);
-  }, [isVisible, onVisibilityChange]);
 
   // 容错判断：MCP 导入结果可能缺少 type 字段
   const isMcpImportResult = (
@@ -298,7 +287,7 @@ export function DeepLinkImportDialog({
   };
 
   return (
-    <Dialog open={isVisible} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen && !!request} onOpenChange={setIsOpen}>
       <DialogContent className="sm:max-w-[500px]" zIndex="top">
         {request && (
           <>
