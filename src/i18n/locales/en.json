@@ -3263,6 +3263,42 @@
     "queryFailed": "Query failed",
     "refresh": "Refresh"
   },
+  "onboarding": {
+    "progress": "Step {{current}} of {{total}}",
+    "back": "Back",
+    "next": "Next",
+    "skip": "Skip tour",
+    "finish": "Done",
+    "replay": "Reset getting-started tour",
+    "settingsTitle": "Getting-started tour",
+    "settingsDescription": "Return to the provider list and start the tour from the first step.",
+    "steps": {
+      "providers": {
+        "title": "Provider list",
+        "description": "See the providers configured for the current app. You can switch between them, edit them, or manage their settings here."
+      },
+      "appSwitcher": {
+        "title": "Switch apps",
+        "description": "Choose an app such as Codex or Claude Code to see its providers and tools."
+      },
+      "addProvider": {
+        "title": "Add a provider",
+        "description": "Select Add to choose a provider preset or enter your own API configuration."
+      },
+      "localRouting": {
+        "title": "Local routing",
+        "description": "In Settings → Routing, enable “Show Routing Toggle on Main Page.” For supported apps, use that toggle to route model requests through CC Switch."
+      },
+      "tools": {
+        "title": "App tools",
+        "description": "Use the toolbar buttons to manage Skills, MCP, prompts, sessions, and more. The available tools depend on the current app."
+      },
+      "settings": {
+        "title": "Settings and shared network",
+        "description": "Open Settings to change preferences. Use the Share tab to create or join a shared network."
+      }
+    }
+  },
   "share": {
     "title": "Share Network",
     "intro": "Join or create a share network to lend AI provider quota with trusted nodes. Every join request requires admin approval.",

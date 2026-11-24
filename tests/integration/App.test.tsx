@@ -1,6 +1,12 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
@@ -175,6 +181,10 @@ vi.mock("@/components/UpdateBadge", () => ({
   ),
 }));
 
+vi.mock("@/components/settings/ThemeSettings", () => ({
+  ThemeSettings: () => null,
+}));
+
 vi.mock("@/components/mcp/McpPanel", () => ({
   default: ({ open, onOpenChange }: any) =>
     open ? (
@@ -198,6 +208,8 @@ const renderApp = (AppComponent: ComponentType) => {
 };
 
 describe("App integration with MSW", () => {
+  const onboardingKey = "cc-switch-onboarding-completed";
+
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
@@ -206,6 +218,49 @@ describe("App integration with MSW", () => {
     skillsPanelMocks.openDiscovery.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+    localStorage.setItem(onboardingKey, "true");
+  });
+
+  it("waits for the welcome notice, remembers a skipped guide, and replays it from settings", async () => {
+    localStorage.removeItem(onboardingKey);
+    const { default: App } = await import("@/App");
+    const app = renderApp(App);
+
+    const welcomeNotice = await screen.findByRole("dialog", {
+      name: "firstRunNotice.title",
+    });
+    expect(
+      screen.queryByText("onboarding.steps.providers.title"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(welcomeNotice).getByRole("button", {
+        name: "firstRunNotice.confirm",
+      }),
+    );
+
+    const guide = await screen.findByRole("dialog", {
+      name: "onboarding.steps.providers.title",
+    });
+    fireEvent.click(
+      within(guide).getByRole("button", { name: "onboarding.skip" }),
+    );
+    expect(localStorage.getItem(onboardingKey)).toBe("true");
+    app.unmount();
+
+    renderApp(App);
+    await screen.findByTestId("provider-list");
+    expect(
+      screen.queryByText("onboarding.steps.providers.title"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("common.settings"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "onboarding.replay" }),
+    );
+    expect(localStorage.getItem(onboardingKey)).toBeNull();
+    await screen.findByRole("dialog", {
+      name: "onboarding.steps.providers.title",
+    });
   });
 
   it("covers basic provider flows via real hooks", async () => {
